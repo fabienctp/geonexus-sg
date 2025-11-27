@@ -1,0 +1,7 @@
+{
+  "name": "GeoNexus GIS",
+  "description": "A professional Web GIS (Système d'Information Géographique) application for spatial data management, analysis, and planning. Features dynamic schema configuration, map visualization, and AI-powered insights.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}

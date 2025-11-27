@@ -1,0 +1,38 @@
+{
+  "name": "geonexus-gis",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "@google/genai": "^1.30.0",
+    "lucide-react": "^0.554.0",
+    "recharts": "^3.4.1",
+    "@fullcalendar/react": "6.1.11",
+    "@fullcalendar/daygrid": "6.1.11",
+    "@fullcalendar/timegrid": "6.1.11",
+    "@fullcalendar/interaction": "6.1.11",
+    "@fullcalendar/core": "6.1.11",
+    "leaflet": "^1.9.4",
+    "clsx": "2.1.0",
+    "tailwind-merge": "2.2.1",
+    "class-variance-authority": "0.7.0",
+    "cmdk": "1.0.0",
+    "date-fns": "3.3.1",
+    "html2canvas": "1.4.1",
+    "jspdf": "2.5.1",
+    "@fullcalendar/list": "^6.1.19"
+  },
+  "devDependencies": {
+    "@types/node": "^22.14.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "typescript": "~5.8.2",
+    "vite": "^6.2.0"
+  }
+}
