@@ -1,7 +1,7 @@
 
 import React, { createContext, useContext, useState, useEffect, ReactNode, useMemo, useCallback } from 'react';
-import { TableSchema, DataRecord, User, UserRole, AppPreferences, ViewTab, MapToolMode, Shortcut } from './types';
-import { INITIAL_SCHEMAS, INITIAL_USERS, INITIAL_ROLES, DEFAULT_PREFERENCES, INITIAL_RECORDS, INITIAL_SHORTCUTS, LANGUAGES } from './constants';
+import { TableSchema, DataRecord, User, UserRole, AppPreferences, ViewTab, MapToolMode, Shortcut, DashboardSchema } from './types';
+import { INITIAL_SCHEMAS, INITIAL_USERS, INITIAL_ROLES, DEFAULT_PREFERENCES, INITIAL_RECORDS, INITIAL_SHORTCUTS, LANGUAGES, INITIAL_DASHBOARDS } from './constants';
 
 interface AppState {
   schemas: TableSchema[];
@@ -9,6 +9,7 @@ interface AppState {
   users: User[];
   roles: UserRole[];
   shortcuts: Shortcut[];
+  dashboards: DashboardSchema[]; // New dashboard state
   currentUser: User | null;
   preferences: AppPreferences;
   
@@ -21,6 +22,8 @@ interface AppState {
     activeLayerId: string | null;
     toolMode: MapToolMode;
     visibleLayers: string[];
+    // New: Track hidden sub-layer values (Key: SchemaID, Value: Array of hidden rule values)
+    hiddenSubLayers: Record<string, string[]>;
     // Filter State
     filterPanelOpen: boolean;
     filterSchemaId: string | null;
@@ -36,6 +39,7 @@ interface AppState {
     activeLayerId: string | null; 
     toolMode: MapToolMode; 
     visibleLayers: string[];
+    hiddenSubLayers: Record<string, string[]>;
     filterPanelOpen: boolean;
     filterSchemaId: string | null;
     filterCriteria: Record<string, string>;
@@ -54,9 +58,9 @@ interface AppState {
 
   // Dashboard State
   dashboardState: {
-    activeSchemaId: string | null;
+    activeDashboardId: string | null; // Changed from activeSchemaId to activeDashboardId
   };
-  setDashboardState: (state: Partial<{ activeSchemaId: string | null }>) => void;
+  setDashboardState: (state: Partial<{ activeDashboardId: string | null }>) => void;
 
   addSchema: (schema: TableSchema) => void;
   updateSchema: (schema: TableSchema) => void;
@@ -77,6 +81,10 @@ interface AppState {
   addShortcut: (shortcut: Shortcut) => void;
   updateShortcut: (shortcut: Shortcut) => void;
   deleteShortcut: (id: string) => void;
+
+  addDashboard: (dashboard: DashboardSchema) => void;
+  updateDashboard: (dashboard: DashboardSchema) => void;
+  deleteDashboard: (id: string) => void;
 
   updatePreferences: (prefs: Partial<AppPreferences>) => void;
   
@@ -112,6 +120,11 @@ export const AppProvider = ({ children }: { children?: ReactNode }) => {
     return saved ? JSON.parse(saved) : INITIAL_SHORTCUTS;
   });
 
+  const [dashboards, setDashboards] = useState<DashboardSchema[]>(() => {
+    const saved = localStorage.getItem('geo_dashboards');
+    return saved ? JSON.parse(saved) : INITIAL_DASHBOARDS;
+  });
+
   const [preferences, setPreferences] = useState<AppPreferences>(() => {
     const saved = localStorage.getItem('geo_prefs');
     if (saved) {
@@ -141,6 +154,7 @@ export const AppProvider = ({ children }: { children?: ReactNode }) => {
     activeLayerId: string | null; 
     toolMode: MapToolMode; 
     visibleLayers: string[];
+    hiddenSubLayers: Record<string, string[]>;
     filterPanelOpen: boolean;
     filterSchemaId: string | null;
     filterCriteria: Record<string, string>;
@@ -152,6 +166,7 @@ export const AppProvider = ({ children }: { children?: ReactNode }) => {
     activeLayerId: null,
     toolMode: 'select',
     visibleLayers: initialMapSchemas,
+    hiddenSubLayers: {},
     filterPanelOpen: false,
     filterSchemaId: null,
     filterCriteria: {},
@@ -174,11 +189,11 @@ export const AppProvider = ({ children }: { children?: ReactNode }) => {
   }, []);
 
   // Dashboard State
-  const [dashboardState, setDashboardStateRaw] = useState<{ activeSchemaId: string | null }>({
-    activeSchemaId: null
+  const [dashboardState, setDashboardStateRaw] = useState<{ activeDashboardId: string | null }>({
+    activeDashboardId: null
   });
 
-  const setDashboardState = useCallback((updates: Partial<{ activeSchemaId: string | null }>) => {
+  const setDashboardState = useCallback((updates: Partial<{ activeDashboardId: string | null }>) => {
     setDashboardStateRaw(prev => ({ ...prev, ...updates }));
   }, []);
 
@@ -205,6 +220,10 @@ export const AppProvider = ({ children }: { children?: ReactNode }) => {
   useEffect(() => {
     localStorage.setItem('geo_shortcuts', JSON.stringify(shortcuts));
   }, [shortcuts]);
+
+  useEffect(() => {
+    localStorage.setItem('geo_dashboards', JSON.stringify(dashboards));
+  }, [dashboards]);
 
   useEffect(() => {
     localStorage.setItem('geo_prefs', JSON.stringify(preferences));
@@ -237,6 +256,11 @@ export const AppProvider = ({ children }: { children?: ReactNode }) => {
   const addShortcut = useCallback((shortcut: Shortcut) => setShortcuts(prev => [...prev, shortcut]), []);
   const updateShortcut = useCallback((shortcut: Shortcut) => setShortcuts(prev => prev.map(s => s.id === shortcut.id ? shortcut : s)), []);
   const deleteShortcut = useCallback((id: string) => setShortcuts(prev => prev.filter(s => s.id !== id)), []);
+
+  // Dashboard Actions
+  const addDashboard = useCallback((dashboard: DashboardSchema) => setDashboards(prev => [...prev, dashboard]), []);
+  const updateDashboard = useCallback((dashboard: DashboardSchema) => setDashboards(prev => prev.map(d => d.id === dashboard.id ? dashboard : d)), []);
+  const deleteDashboard = useCallback((id: string) => setDashboards(prev => prev.filter(d => d.id !== id)), []);
 
   // Preferences Action
   const updatePreferences = useCallback((prefs: Partial<AppPreferences>) => setPreferences(prev => ({ ...prev, ...prefs })), []);
@@ -297,14 +321,14 @@ export const AppProvider = ({ children }: { children?: ReactNode }) => {
       case 'dashboard_view':
          setActiveTab('dashboard');
          setDashboardState({
-           activeSchemaId: shortcut.config.dashboardSchemaId || null
+           activeDashboardId: shortcut.config.dashboardSchemaId || null
          });
          break;
     }
   }, [setActiveTab, setMapState, setDataState, setDashboardState]);
 
   const contextValue = useMemo(() => ({ 
-      schemas, records, users, roles, shortcuts, currentUser, preferences,
+      schemas, records, users, roles, shortcuts, dashboards, currentUser, preferences,
       activeTab, setActiveTab,
       mapState, setMapState,
       dataState, setDataState,
@@ -314,15 +338,17 @@ export const AppProvider = ({ children }: { children?: ReactNode }) => {
       addUser, updateUser, deleteUser,
       addRole, updateRole, deleteRole,
       addShortcut, updateShortcut, deleteShortcut,
+      addDashboard, updateDashboard, deleteDashboard,
       updatePreferences, executeShortcut
     }), 
     [
-      schemas, records, users, roles, shortcuts, currentUser, preferences, activeTab, mapState, dataState, dashboardState,
+      schemas, records, users, roles, shortcuts, dashboards, currentUser, preferences, activeTab, mapState, dataState, dashboardState,
       setMapState, setDataState, setDashboardState, addSchema, updateSchema, deleteSchema, 
       addRecord, updateRecord, deleteRecord, 
       addUser, updateUser, deleteUser, 
       addRole, updateRole, deleteRole,
       addShortcut, updateShortcut, deleteShortcut,
+      addDashboard, updateDashboard, deleteDashboard,
       updatePreferences, executeShortcut
     ]
   );

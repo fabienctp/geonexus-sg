@@ -9,19 +9,25 @@ import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Toolti
 import { Sparkles, Loader2, BarChart3, Table as TableIcon } from 'lucide-react';
 import { useTranslation } from '../hooks/useTranslation';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table';
-import { DataRecord, TableSchema } from '../types';
+import { DataRecord, TableSchema, DashboardSchema } from '../types';
 
 const COLORS = ['hsl(var(--primary))', '#00C49F', '#FFBB28', '#FF8042', '#8884d8'];
 
 interface DashboardViewProps {
   activeSchema: TableSchema;
   records: DataRecord[];
-  // Optional overrides or controls
+  dashboardConfig: {
+      title: string;
+      widgets: any[];
+      filters: any[];
+      filterLogic?: 'and' | 'or';
+      showTable?: boolean;
+  };
   showHeader?: boolean;
   onAnalyzeRequest?: (schema: TableSchema, records: DataRecord[]) => Promise<string>;
 }
 
-export const DashboardView: React.FC<DashboardViewProps> = ({ activeSchema, records, showHeader = true, onAnalyzeRequest }) => {
+export const DashboardView: React.FC<DashboardViewProps> = ({ activeSchema, dashboardConfig, records, showHeader = true, onAnalyzeRequest }) => {
   const { t } = useTranslation();
   const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -31,31 +37,41 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ activeSchema, reco
     setAiAnalysis(null);
   }, [activeSchema.id]);
 
-  // Filter records based on tableId AND configured filters in schema
+  // Filter records based on tableId AND configured filters in dashboard
   const activeRecords = useMemo(() => {
     let result = records.filter(r => r.tableId === activeSchema.id);
     
     // Apply configured dashboard filters
-    if (activeSchema.dashboard?.filters && activeSchema.dashboard.filters.length > 0) {
+    if (dashboardConfig.filters && dashboardConfig.filters.length > 0) {
         result = result.filter(r => {
-            return activeSchema.dashboard!.filters!.every(f => {
-                if (!f.value || !f.field) return true;
+            const checkFilter = (f: any) => {
+                if (!f.value || !f.field) return true; // Ignore empty filters
                 const val = r.data[f.field];
                 const checkVal = f.value;
 
                 switch(f.operator) {
-                    case 'equals': return String(val) == checkVal;
-                    case 'neq': return String(val) != checkVal;
-                    case 'contains': return String(val).toLowerCase().includes(checkVal.toLowerCase());
-                    case 'gt': return Number(val) > Number(checkVal);
-                    case 'lt': return Number(val) < Number(checkVal);
+                    // Use loose equality to handle string vs number/boolean issues
+                    case 'equals': return String(val) == String(checkVal);
+                    case 'neq': return String(val) != String(checkVal);
+                    case 'contains': return String(val).toLowerCase().includes(String(checkVal).toLowerCase());
+                    // Use lexicographical comparison which works for ISO Date strings and numbers correctly
+                    case 'gt': return val > checkVal; 
+                    case 'lt': return val < checkVal;
                     default: return true;
                 }
-            });
+            };
+
+            if (dashboardConfig.filterLogic === 'or') {
+                // Return true if ANY filter matches
+                return dashboardConfig.filters.some(checkFilter);
+            } else {
+                // Default 'and': Return true if ALL filters match
+                return dashboardConfig.filters.every(checkFilter);
+            }
         });
     }
     return result;
-  }, [activeSchema, records]);
+  }, [activeSchema, records, dashboardConfig.filters, dashboardConfig.filterLogic]);
 
   // Basic Stats Calculation
   const recordCount = activeRecords.length;
@@ -90,10 +106,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ activeSchema, reco
        {showHeader && (
          <div>
             <h1 className="text-3xl font-bold tracking-tight">
-              {activeSchema.dashboard?.title || t('dash.title')}
+              {dashboardConfig.title || t('dash.title')}
             </h1>
             <p className="text-muted-foreground">
-               {activeSchema.dashboard?.title ? t('dash.title') + ' - ' : ''} {activeSchema.name}
+               Source: {activeSchema.name}
             </p>
          </div>
        )}
@@ -106,10 +122,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ activeSchema, reco
             </CardHeader>
             <CardContent>
               <div className="text-4xl font-bold">{recordCount}</div>
-              {activeSchema.dashboard?.filters && activeSchema.dashboard.filters.length > 0 && (
+              {dashboardConfig.filters && dashboardConfig.filters.length > 0 && (
                   <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
                      <span className="w-2 h-2 rounded-full bg-blue-500 inline-block"></span>
                      {t('dash.filtered')}
+                     <span className="bg-slate-100 text-slate-600 px-1 rounded text-[10px] uppercase font-bold border">
+                         {dashboardConfig.filterLogic === 'or' ? 'Any' : 'All'}
+                     </span>
                   </p>
               )}
             </CardContent>
@@ -127,17 +146,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ activeSchema, reco
               <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wider">{t('dash.widgets')}</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold capitalize">{activeSchema.dashboard?.widgets.length || 0}</div>
+              <div className="text-2xl font-bold capitalize">{dashboardConfig.widgets.length || 0}</div>
             </CardContent>
           </Card>
 
           {/* Dynamic Widgets */}
-          {activeSchema.dashboard?.widgets.map((widget, idx) => {
+          {dashboardConfig.widgets.map((widget, idx) => {
              const data = getWidgetData(widget.field);
              if (data.length === 0) return null;
 
              return (
-               <Card key={widget.id} className="lg:col-span-1 min-h-[300px]">
+               <Card key={widget.id || idx} className="lg:col-span-1 min-h-[300px]">
                  <CardHeader>
                    <CardTitle className="text-base">{widget.title || `${t('dash.analysis_by')} ${widget.field}`}</CardTitle>
                  </CardHeader>
@@ -208,7 +227,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ activeSchema, reco
           </Card>
 
           {/* Data Table (If enabled) */}
-          {activeSchema.dashboard?.showTable && (
+          {dashboardConfig.showTable && (
              <Card className="lg:col-span-3 overflow-hidden">
                 <CardHeader className="pb-3">
                   <CardTitle className="flex items-center gap-2">
@@ -270,35 +289,33 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ activeSchema, reco
 };
 
 export const DashboardTab: React.FC = () => {
-  const { schemas, records, dashboardState, setDashboardState } = useAppStore();
+  const { schemas, records, dashboards, dashboardState, setDashboardState } = useAppStore();
   const { t } = useTranslation();
   
-  // Filter schemas that have dashboard enabled
-  const dashboardSchemas = schemas.filter(s => s.dashboard?.enabled);
-  
-  const selectedSchemaId = dashboardState.activeSchemaId || '';
+  const selectedDashboardId = dashboardState.activeDashboardId || '';
 
-  const setSelectedSchemaId = (id: string) => {
-    setDashboardState({ activeSchemaId: id });
+  const setSelectedDashboardId = (id: string) => {
+    setDashboardState({ activeDashboardId: id });
   };
 
   // Default selection priority
   useEffect(() => {
-    if (dashboardSchemas.length > 0 && (!selectedSchemaId || !dashboardSchemas.find(s => s.id === selectedSchemaId))) {
+    if (dashboards.length > 0 && (!selectedDashboardId || !dashboards.find(d => d.id === selectedDashboardId))) {
          // Find the default one
-         const defaultSchema = dashboardSchemas.find(s => s.dashboard?.isDefault);
-         setSelectedSchemaId(defaultSchema ? defaultSchema.id : dashboardSchemas[0].id);
+         const defaultDash = dashboards.find(d => d.isDefault);
+         setSelectedDashboardId(defaultDash ? defaultDash.id : dashboards[0].id);
     }
-  }, [dashboardSchemas, selectedSchemaId]);
+  }, [dashboards, selectedDashboardId]);
 
-  const activeSchema = dashboardSchemas.find(s => s.id === selectedSchemaId);
+  const activeDashboard = dashboards.find(d => d.id === selectedDashboardId);
+  const activeSchema = activeDashboard ? schemas.find(s => s.id === activeDashboard.tableId) : null;
 
-  if (dashboardSchemas.length === 0) {
+  if (dashboards.length === 0) {
     return (
       <div className="flex items-center justify-center h-full text-muted-foreground flex-col gap-2">
         <BarChart3 className="w-12 h-12 opacity-20" />
         <p>{t('dash.noDash')}</p>
-        <p className="text-sm">Go to Configuration &gt; Dashboards to enable analytics for your tables.</p>
+        <p className="text-sm">Go to Configuration &gt; Dashboards to create analytics views.</p>
       </div>
     );
   }
@@ -308,25 +325,34 @@ export const DashboardTab: React.FC = () => {
       <div className="flex justify-between items-center">
         {/* Render active title from schema or fallback */}
         <h1 className="text-3xl font-bold tracking-tight">
-          {activeSchema?.dashboard?.title || t('dash.title')}
+          {activeDashboard?.name || t('dash.title')}
         </h1>
         <div className="w-64">
           <Combobox
-            options={dashboardSchemas.map(s => ({ value: s.id, label: s.name }))}
-            value={selectedSchemaId}
-            onChange={(val) => setSelectedSchemaId(val)}
-            placeholder="Select dataset..."
+            options={dashboards.map(d => ({ value: d.id, label: d.name }))}
+            value={selectedDashboardId}
+            onChange={(val) => setSelectedDashboardId(val)}
+            placeholder="Select dashboard..."
           />
         </div>
       </div>
 
-      {!activeSchema ? (
-        <div className="text-center py-20 text-muted-foreground">{t('dash.select')}</div>
+      {!activeDashboard || !activeSchema ? (
+        <div className="text-center py-20 text-muted-foreground">
+             {!activeDashboard ? t('dash.select') : "Configuration Error: Source table not found."}
+        </div>
       ) : (
         <DashboardView 
            activeSchema={activeSchema} 
+           dashboardConfig={{
+               title: activeDashboard.name,
+               widgets: activeDashboard.widgets,
+               filters: activeDashboard.filters,
+               filterLogic: activeDashboard.filterLogic,
+               showTable: activeDashboard.showTable
+           }}
            records={records} 
-           showHeader={false} // We render the header above to include the selector
+           showHeader={false} 
            onAnalyzeRequest={analyzeData}
         />
       )}

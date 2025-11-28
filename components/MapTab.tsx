@@ -9,7 +9,8 @@ import {
   MousePointer2, Plus, Move, Ruler, Navigation, Filter, Printer, 
   Trash2, X, Check, Map as MapIcon, Layers, Search, ChevronDown, ChevronUp, Info,
   CircleDot, Hexagon, Spline, Undo2, Redo2, Save, Target, PenLine,
-  FileDown
+  FileDown,
+  ChevronRight
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { Button } from './ui/button';
@@ -96,6 +97,7 @@ export const MapTab: React.FC = () => {
 
   // UI State
   const [isLayersOpen, setIsLayersOpen] = useState(true);
+  const [expandedLayers, setExpandedLayers] = useState<Record<string, boolean>>({}); // For layer accordion
   const [searchQuery, setSearchQuery] = useState('');
 
   // Sync active schema state & determine geo type
@@ -326,6 +328,23 @@ export const MapTab: React.FC = () => {
       }
   };
 
+  const toggleSubLayer = (schemaId: string, value: string) => {
+    const currentHidden = mapState.hiddenSubLayers?.[schemaId] || [];
+    const newHidden = currentHidden.includes(value)
+        ? currentHidden.filter(v => v !== value) // Unhide
+        : [...currentHidden, value]; // Hide
+
+    setMapState({
+        hiddenSubLayers: {
+            ...mapState.hiddenSubLayers,
+            [schemaId]: newHidden
+        }
+    });
+  };
+
+  const toggleLayerExpand = (id: string) => {
+      setExpandedLayers(prev => ({...prev, [id]: !prev[id]}));
+  };
 
   // --- Map Initialization ---
   useEffect(() => {
@@ -334,7 +353,8 @@ export const MapTab: React.FC = () => {
     const map = L.map(mapContainer.current, {
        zoomControl: false,
        attributionControl: false,
-       doubleClickZoom: false // Disable default dblclick zoom for drawing flow
+       doubleClickZoom: false, // Disable default dblclick zoom for drawing flow
+       preferCanvas: true // Force canvas renderer to ensure features are captured in PDF export
     }).setView(
       mapState.center || [48.8566, 2.3522], 
       mapState.zoom || 13
@@ -687,6 +707,15 @@ export const MapTab: React.FC = () => {
          if (!record.geometry) return;
          const { type, coordinates } = record.geometry;
 
+         // Check if this specific feature is hidden via sub-layer configuration
+         if (schema.subLayerConfig?.enabled && schema.subLayerConfig.field) {
+             const val = record.data[schema.subLayerConfig.field];
+             const hiddenValues = mapState.hiddenSubLayers?.[schema.id] || [];
+             if (hiddenValues.includes(String(val))) {
+                 return; // Skip rendering this feature
+             }
+         }
+
          // Determine color based on rules or schema default
          let color = schema.color;
          if (schema.subLayerConfig?.enabled && schema.subLayerConfig.field) {
@@ -894,7 +923,7 @@ export const MapTab: React.FC = () => {
       });
     });
 
-  }, [schemas, records, mapState.visibleLayers, mapState.toolMode]);
+  }, [schemas, records, mapState.visibleLayers, mapState.hiddenSubLayers, mapState.toolMode]);
 
   // --- Measure Layer Rendering ---
   useEffect(() => {
@@ -950,10 +979,17 @@ export const MapTab: React.FC = () => {
         
         // 1. Capture FULL map container at high resolution
         const scale = 3; 
+        const width = mapContainer.current.offsetWidth;
+        const height = mapContainer.current.offsetHeight;
+        
         const canvas = await html2canvas(mapContainer.current, {
             useCORS: true,
-            allowTaint: true,
+            allowTaint: false, // Must be false for toDataURL to work properly
             scale: scale,
+            width: width,
+            height: height,
+            scrollX: 0,
+            scrollY: 0,
             logging: false,
             backgroundColor: '#ffffff'
         });
@@ -1456,30 +1492,73 @@ export const MapTab: React.FC = () => {
 
           {/* Layer List */}
           {isLayersOpen && (
-              <div className="bg-background/95 backdrop-blur border shadow-xl rounded-lg p-3 w-64 animate-in slide-in-from-top-2">
-                 <div className="text-[10px] font-bold uppercase text-muted-foreground mb-2 flex justify-between items-center">
+              <div className="bg-background/95 backdrop-blur border shadow-xl rounded-lg p-3 w-72 animate-in slide-in-from-top-2 flex flex-col max-h-[calc(100vh-120px)]">
+                 <div className="text-[10px] font-bold uppercase text-muted-foreground mb-2 flex justify-between items-center shrink-0">
                     <span>Visible Layers</span>
                     <span className="bg-muted px-1.5 rounded-full">{mapState.visibleLayers.length}</span>
                  </div>
-                 <div className="space-y-1 max-h-[300px] overflow-y-auto custom-scrollbar pr-1">
-                    {schemas.filter(s => s.geometryType !== 'none').map(s => (
-                       <label key={s.id} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-muted/50 p-1.5 rounded transition-colors select-none group">
-                          <input 
-                            type="checkbox" 
-                            className="rounded border-gray-300 text-primary focus:ring-primary h-4 w-4"
-                            checked={mapState.visibleLayers.includes(s.id)}
-                            onChange={(e) => {
-                               const newLayers = e.target.checked 
-                                 ? [...mapState.visibleLayers, s.id]
-                                 : mapState.visibleLayers.filter(id => id !== s.id);
-                               setMapState({ visibleLayers: newLayers });
-                            }}
-                          />
-                          <span className="w-3 h-3 rounded-full shadow-sm ring-1 ring-black/5" style={{background: s.color}} />
-                          <span className="truncate flex-1 font-medium group-hover:text-primary transition-colors">{s.name}</span>
-                          <span className="text-[10px] text-muted-foreground bg-muted px-1 rounded">{records.filter(r => r.tableId === s.id && r.geometry).length}</span>
-                       </label>
-                    ))}
+                 <div className="space-y-1 overflow-y-auto custom-scrollbar pr-1 flex-1">
+                    {schemas.filter(s => s.geometryType !== 'none').map(s => {
+                       const isVisible = mapState.visibleLayers.includes(s.id);
+                       const hasSubLayers = s.subLayerConfig?.enabled && s.subLayerConfig.rules.length > 0;
+                       const isExpanded = expandedLayers[s.id];
+
+                       return (
+                        <div key={s.id} className="flex flex-col">
+                            <div className="flex items-center gap-2 p-1.5 rounded hover:bg-muted/50 transition-colors select-none group">
+                                <input 
+                                    type="checkbox" 
+                                    className="rounded border-gray-300 text-primary focus:ring-primary h-4 w-4"
+                                    checked={isVisible}
+                                    onChange={(e) => {
+                                        const newLayers = e.target.checked 
+                                            ? [...mapState.visibleLayers, s.id]
+                                            : mapState.visibleLayers.filter(id => id !== s.id);
+                                        setMapState({ visibleLayers: newLayers });
+                                    }}
+                                />
+                                <label className="flex items-center gap-2 flex-1 cursor-pointer" onClick={() => {
+                                    if(hasSubLayers) toggleLayerExpand(s.id);
+                                }}>
+                                    <span className="w-3 h-3 rounded-full shadow-sm ring-1 ring-black/5" style={{background: s.color}} />
+                                    <span className="truncate flex-1 font-medium text-sm">{s.name}</span>
+                                </label>
+                                
+                                <div className="flex items-center gap-1">
+                                    <span className="text-[10px] text-muted-foreground bg-muted px-1 rounded">
+                                        {records.filter(r => r.tableId === s.id && r.geometry).length}
+                                    </span>
+                                    {hasSubLayers && isVisible && (
+                                        <button onClick={() => toggleLayerExpand(s.id)} className="p-0.5 hover:bg-muted rounded text-muted-foreground">
+                                            {isExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                            
+                            {/* Sub-Layer Rules */}
+                            {hasSubLayers && isVisible && isExpanded && (
+                                <div className="ml-6 mt-1 space-y-1 border-l-2 pl-2 border-muted">
+                                    {s.subLayerConfig!.rules.map((rule, idx) => {
+                                        const isHidden = mapState.hiddenSubLayers?.[s.id]?.includes(rule.value);
+                                        return (
+                                            <label key={idx} className="flex items-center gap-2 text-xs cursor-pointer hover:bg-muted/30 p-1 rounded">
+                                                <input 
+                                                    type="checkbox" 
+                                                    className="rounded border-gray-300 text-primary focus:ring-primary h-3 w-3"
+                                                    checked={!isHidden}
+                                                    onChange={() => toggleSubLayer(s.id, rule.value)}
+                                                />
+                                                <span className="w-2 h-2 rounded-full" style={{background: rule.color}}></span>
+                                                <span className="truncate text-muted-foreground">{rule.label || rule.value}</span>
+                                            </label>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </div>
+                       );
+                    })}
                     {schemas.filter(s => s.geometryType !== 'none').length === 0 && (
                         <div className="text-xs text-muted-foreground italic py-2 text-center">No layers configured</div>
                     )}
@@ -1492,19 +1571,24 @@ export const MapTab: React.FC = () => {
        {mapState.visibleLayers.length > 0 && printConfig.includeLegend && (
           <div className="absolute bottom-8 right-4 z-[400] bg-background/95 backdrop-blur p-2 rounded-lg shadow-lg border text-xs max-w-[200px] animate-in slide-in-from-bottom-2">
               <div className="font-bold mb-1 border-b pb-1">Legend</div>
-              <div className="space-y-1">
+              <div className="space-y-1 max-h-[200px] overflow-y-auto custom-scrollbar">
                   {schemas.filter(s => mapState.visibleLayers.includes(s.id)).map(s => {
                       // If using sub-layer config (categories), show those
                       if (s.subLayerConfig?.enabled && s.subLayerConfig.rules.length > 0) {
                           return (
                               <div key={s.id} className="space-y-1 mt-1.5">
                                   <div className="font-semibold text-[10px] text-muted-foreground">{s.name}</div>
-                                  {s.subLayerConfig.rules.map((rule, idx) => (
-                                      <div key={idx} className="flex items-center gap-2">
-                                          <span className="w-2 h-2 rounded-full" style={{background: rule.color}}></span>
-                                          <span className="truncate">{rule.label || rule.value}</span>
-                                      </div>
-                                  ))}
+                                  {s.subLayerConfig.rules.map((rule, idx) => {
+                                      // Skip hidden rules in legend to avoid confusion? Or keep them? 
+                                      // Usually legends show everything available, but greying out hidden ones is nice.
+                                      const isHidden = mapState.hiddenSubLayers?.[s.id]?.includes(rule.value);
+                                      return (
+                                          <div key={idx} className={cn("flex items-center gap-2", isHidden && "opacity-40 grayscale")}>
+                                              <span className="w-2 h-2 rounded-full" style={{background: rule.color}}></span>
+                                              <span className="truncate">{rule.label || rule.value}</span>
+                                          </div>
+                                      );
+                                  })}
                               </div>
                           )
                       }

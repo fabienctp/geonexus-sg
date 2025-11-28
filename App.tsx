@@ -73,7 +73,7 @@ function AppContent({ onLogout }: { onLogout: () => void }) {
   return (
     <div className="flex h-screen w-screen overflow-hidden">
       {/* Sidebar Navigation */}
-      <nav className="w-20 bg-slate-900 flex flex-col items-center py-6 gap-8 z-50 shrink-0">
+      <nav className="w-20 bg-slate-900 flex flex-col items-center py-6 gap-8 z-[2000] shrink-0">
         <div className="w-10 h-10 bg-primary rounded-lg flex items-center justify-center shadow-lg shadow-primary/50 cursor-pointer" onClick={() => setActiveTab('map')}>
           <span className="text-primary-foreground font-bold text-xl">G</span>
         </div>

@@ -44,13 +44,18 @@ export interface DashboardFilter {
   value: string;
 }
 
-export interface DashboardConfig {
-  enabled: boolean;
-  title?: string; // Custom dashboard title
+// Standalone Dashboard Schema
+export interface DashboardSchema {
+  id: string;
+  name: string;
+  description?: string;
+  tableId: string; // The source table this dashboard is built upon
   isDefault?: boolean;
-  showTable?: boolean; // New: Show data grid below charts
-  filters?: DashboardFilter[]; // New: Global filters for the dashboard
+  showTable?: boolean; // Show data grid below charts
+  filters: DashboardFilter[]; // Global filters for this dashboard
+  filterLogic?: 'and' | 'or'; // Logic for combining multiple filters
   widgets: DashboardWidget[];
+  createdAt: string;
 }
 
 export interface DialogConfig {
@@ -82,17 +87,17 @@ export interface TableSchema {
   
   // View Configurations
   visibleInData: boolean;
-  isDefaultInData?: boolean; // New: Default table for Data View
-  allowNonSpatialEntry?: boolean; // New: Allow adding records without geometry
+  isDefaultInData?: boolean; 
+  allowNonSpatialEntry?: boolean;
   visibleInMap: boolean;
-  isDefaultVisibleInMap?: boolean; // New: Visible on map load
-  markerImage?: string; // Custom icon URL for point features
+  isDefaultVisibleInMap?: boolean;
+  markerImage?: string; 
   mapDisplayMode?: MapDisplayMode;
-  hoverFields?: string[]; // New: Fields to show on hover tooltip (Multi-select)
-  subLayerConfig?: SubLayerConfig; // New: Conditional styling
+  hoverFields?: string[]; 
+  subLayerConfig?: SubLayerConfig; 
   dialogConfig?: DialogConfig;
   planning?: PlanningConfig;
-  dashboard?: DashboardConfig;
+  // Dashboard config removed from here
 }
 
 export interface FeatureGeometry {
@@ -176,7 +181,7 @@ export interface Shortcut {
     filterCriteria?: Record<string, string>;
 
     // dashboard_view
-    dashboardSchemaId?: string;
+    dashboardSchemaId?: string; // Now points to DashboardSchema.id
   };
 }
 
