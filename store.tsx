@@ -1,7 +1,6 @@
-
 import React, { createContext, useContext, useState, useEffect, ReactNode, useMemo, useCallback } from 'react';
-import { TableSchema, DataRecord, User, UserRole, AppPreferences, ViewTab, MapToolMode, Shortcut, DashboardSchema } from './types';
-import { INITIAL_SCHEMAS, INITIAL_USERS, INITIAL_ROLES, DEFAULT_PREFERENCES, INITIAL_RECORDS, INITIAL_SHORTCUTS, LANGUAGES, INITIAL_DASHBOARDS } from './constants';
+import { TableSchema, DataRecord, User, UserRole, AppPreferences, ViewTab, MapToolMode, Shortcut, DashboardSchema, CalendarSchema, Permission, MapConfig } from './types';
+import { INITIAL_SCHEMAS, INITIAL_USERS, INITIAL_ROLES, DEFAULT_PREFERENCES, INITIAL_RECORDS, INITIAL_SHORTCUTS, LANGUAGES, INITIAL_DASHBOARDS, INITIAL_CALENDARS, INITIAL_MAP_CONFIG } from './constants';
 
 interface AppState {
   schemas: TableSchema[];
@@ -9,8 +8,11 @@ interface AppState {
   users: User[];
   roles: UserRole[];
   shortcuts: Shortcut[];
-  dashboards: DashboardSchema[]; // New dashboard state
+  dashboards: DashboardSchema[];
+  calendars: CalendarSchema[];
+  mapConfig: MapConfig;
   currentUser: User | null;
+  setCurrentUser: (user: User | null) => void;
   preferences: AppPreferences;
   
   // Navigation State
@@ -22,17 +24,20 @@ interface AppState {
     activeLayerId: string | null;
     toolMode: MapToolMode;
     visibleLayers: string[];
-    // New: Track hidden sub-layer values (Key: SchemaID, Value: Array of hidden rule values)
     hiddenSubLayers: Record<string, string[]>;
-    // Filter State
+    layerOpacity: Record<string, number>;
+    layerOrder: string[]; // Order of feature layers (Schema IDs)
+    
+    // Base Layer State
+    visibleBaseLayers: string[]; // Ordered list of active base layer IDs
+    baseLayerOpacity: Record<string, number>;
+
     filterPanelOpen: boolean;
     filterSchemaId: string | null;
     filterCriteria: Record<string, string>;
-    // View State
     center?: [number, number];
     zoom?: number;
-    projection: string; // New projection state
-    // Interaction Defaults
+    projection: string;
     featureDefaults?: Record<string, any>;
   };
   setMapState: (state: Partial<{ 
@@ -40,6 +45,10 @@ interface AppState {
     toolMode: MapToolMode; 
     visibleLayers: string[];
     hiddenSubLayers: Record<string, string[]>;
+    layerOpacity: Record<string, number>;
+    layerOrder: string[];
+    visibleBaseLayers: string[];
+    baseLayerOpacity: Record<string, number>;
     filterPanelOpen: boolean;
     filterSchemaId: string | null;
     filterCriteria: Record<string, string>;
@@ -58,7 +67,7 @@ interface AppState {
 
   // Dashboard State
   dashboardState: {
-    activeDashboardId: string | null; // Changed from activeSchemaId to activeDashboardId
+    activeDashboardId: string | null;
   };
   setDashboardState: (state: Partial<{ activeDashboardId: string | null }>) => void;
 
@@ -86,10 +95,18 @@ interface AppState {
   updateDashboard: (dashboard: DashboardSchema) => void;
   deleteDashboard: (id: string) => void;
 
+  addCalendar: (calendar: CalendarSchema) => void; 
+  updateCalendar: (calendar: CalendarSchema) => void; 
+  deleteCalendar: (id: string) => void; 
+
   updatePreferences: (prefs: Partial<AppPreferences>) => void;
+  updateMapConfig: (config: MapConfig) => void;
   
   // Helper to run shortcut
   executeShortcut: (shortcut: Shortcut) => void;
+  
+  // Auth Helper
+  hasPermission: (permission: Permission) => boolean;
 }
 
 const AppContext = createContext<AppState | undefined>(undefined);
@@ -125,6 +142,25 @@ export const AppProvider = ({ children }: { children?: ReactNode }) => {
     return saved ? JSON.parse(saved) : INITIAL_DASHBOARDS;
   });
 
+  const [calendars, setCalendars] = useState<CalendarSchema[]>(() => {
+    const saved = localStorage.getItem('geo_calendars');
+    return saved ? JSON.parse(saved) : INITIAL_CALENDARS;
+  });
+
+  const [mapConfig, setMapConfig] = useState<MapConfig>(() => {
+    const saved = localStorage.getItem('geo_map_config');
+    // Safety check for existing configs that might be corrupted or old
+    if (saved) {
+        try {
+            const parsed = JSON.parse(saved);
+            if (parsed && Array.isArray(parsed.tileLayers)) {
+                return parsed;
+            }
+        } catch (e) { console.error("Failed to parse map config", e); }
+    }
+    return INITIAL_MAP_CONFIG;
+  });
+
   const [preferences, setPreferences] = useState<AppPreferences>(() => {
     const saved = localStorage.getItem('geo_prefs');
     if (saved) {
@@ -150,11 +186,30 @@ export const AppProvider = ({ children }: { children?: ReactNode }) => {
     .filter(s => s.geometryType !== 'none' && s.visibleInMap && (s.isDefaultVisibleInMap !== false))
     .map(s => s.id);
 
+  // Derive initial base layers from config
+  const initialBaseLayers = mapConfig.tileLayers
+      .filter(l => l.isDefaultVisible)
+      .map(l => l.id);
+  
+  // Fallback if none configured but layers exist (legacy or user disabled all)
+  if (initialBaseLayers.length === 0 && mapConfig.tileLayers.length > 0) {
+      initialBaseLayers.push(mapConfig.tileLayers[0].id);
+  }
+
+  const initialBaseOpacity = mapConfig.tileLayers.reduce((acc, l) => ({
+      ...acc,
+      [l.id]: l.defaultOpacity !== undefined ? l.defaultOpacity : 1
+  }), {} as Record<string, number>);
+
   const [mapState, setMapStateRaw] = useState<{ 
     activeLayerId: string | null; 
     toolMode: MapToolMode; 
     visibleLayers: string[];
     hiddenSubLayers: Record<string, string[]>;
+    layerOpacity: Record<string, number>;
+    layerOrder: string[];
+    visibleBaseLayers: string[];
+    baseLayerOpacity: Record<string, number>;
     filterPanelOpen: boolean;
     filterSchemaId: string | null;
     filterCriteria: Record<string, string>;
@@ -167,11 +222,15 @@ export const AppProvider = ({ children }: { children?: ReactNode }) => {
     toolMode: 'select',
     visibleLayers: initialMapSchemas,
     hiddenSubLayers: {},
+    layerOpacity: {},
+    layerOrder: [], // Will be populated in components or effects if empty
+    visibleBaseLayers: initialBaseLayers,
+    baseLayerOpacity: initialBaseOpacity,
     filterPanelOpen: false,
     filterSchemaId: null,
     filterCriteria: {},
     featureDefaults: {},
-    projection: 'EPSG:3857' // Default Web Mercator
+    projection: 'EPSG:3857'
   });
 
   const setMapState = useCallback((updates: Partial<typeof mapState>) => {
@@ -198,8 +257,8 @@ export const AppProvider = ({ children }: { children?: ReactNode }) => {
   }, []);
 
 
-  // In a real app, this would be managed by auth session
-  const [currentUser] = useState<User | null>(users[0] || null);
+  // User Session State
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
 
   useEffect(() => {
     localStorage.setItem('geo_schemas', JSON.stringify(schemas));
@@ -226,6 +285,14 @@ export const AppProvider = ({ children }: { children?: ReactNode }) => {
   }, [dashboards]);
 
   useEffect(() => {
+    localStorage.setItem('geo_calendars', JSON.stringify(calendars));
+  }, [calendars]);
+
+  useEffect(() => {
+    localStorage.setItem('geo_map_config', JSON.stringify(mapConfig));
+  }, [mapConfig]);
+
+  useEffect(() => {
     localStorage.setItem('geo_prefs', JSON.stringify(preferences));
   }, [preferences]);
 
@@ -235,6 +302,8 @@ export const AppProvider = ({ children }: { children?: ReactNode }) => {
   const deleteSchema = useCallback((id: string) => {
     setSchemas(prev => prev.filter(s => s.id !== id));
     setRecords(prev => prev.filter(r => r.tableId !== id));
+    setDashboards(prev => prev.filter(d => d.tableId !== id));
+    setCalendars(prev => prev.filter(c => c.tableId !== id));
   }, []);
 
   // Record Actions
@@ -261,6 +330,14 @@ export const AppProvider = ({ children }: { children?: ReactNode }) => {
   const addDashboard = useCallback((dashboard: DashboardSchema) => setDashboards(prev => [...prev, dashboard]), []);
   const updateDashboard = useCallback((dashboard: DashboardSchema) => setDashboards(prev => prev.map(d => d.id === dashboard.id ? dashboard : d)), []);
   const deleteDashboard = useCallback((id: string) => setDashboards(prev => prev.filter(d => d.id !== id)), []);
+
+  // Calendar Actions
+  const addCalendar = useCallback((calendar: CalendarSchema) => setCalendars(prev => [...prev, calendar]), []);
+  const updateCalendar = useCallback((calendar: CalendarSchema) => setCalendars(prev => prev.map(c => c.id === calendar.id ? calendar : c)), []);
+  const deleteCalendar = useCallback((id: string) => setCalendars(prev => prev.filter(c => c.id !== id)), []);
+
+  // Map Config Action
+  const updateMapConfig = useCallback((config: MapConfig) => setMapConfig(config), []);
 
   // Preferences Action
   const updatePreferences = useCallback((prefs: Partial<AppPreferences>) => setPreferences(prev => ({ ...prev, ...prefs })), []);
@@ -327,8 +404,20 @@ export const AppProvider = ({ children }: { children?: ReactNode }) => {
     }
   }, [setActiveTab, setMapState, setDataState, setDashboardState]);
 
+  // Authorization Check
+  const hasPermission = useCallback((permission: Permission) => {
+    if (!currentUser) return false;
+    const role = roles.find(r => r.id === currentUser.roleId);
+    if (!role) return false;
+    
+    // System Admins have all permissions implicit or explicit
+    if (role.permissions.includes('sys_admin')) return true;
+    
+    return role.permissions.includes(permission);
+  }, [currentUser, roles]);
+
   const contextValue = useMemo(() => ({ 
-      schemas, records, users, roles, shortcuts, dashboards, currentUser, preferences,
+      schemas, records, users, roles, shortcuts, dashboards, calendars, mapConfig, currentUser, setCurrentUser, preferences,
       activeTab, setActiveTab,
       mapState, setMapState,
       dataState, setDataState,
@@ -339,17 +428,19 @@ export const AppProvider = ({ children }: { children?: ReactNode }) => {
       addRole, updateRole, deleteRole,
       addShortcut, updateShortcut, deleteShortcut,
       addDashboard, updateDashboard, deleteDashboard,
-      updatePreferences, executeShortcut
+      addCalendar, updateCalendar, deleteCalendar,
+      updatePreferences, updateMapConfig, executeShortcut, hasPermission
     }), 
     [
-      schemas, records, users, roles, shortcuts, dashboards, currentUser, preferences, activeTab, mapState, dataState, dashboardState,
+      schemas, records, users, roles, shortcuts, dashboards, calendars, mapConfig, currentUser, preferences, activeTab, mapState, dataState, dashboardState,
       setMapState, setDataState, setDashboardState, addSchema, updateSchema, deleteSchema, 
       addRecord, updateRecord, deleteRecord, 
       addUser, updateUser, deleteUser, 
       addRole, updateRole, deleteRole,
       addShortcut, updateShortcut, deleteShortcut,
       addDashboard, updateDashboard, deleteDashboard,
-      updatePreferences, executeShortcut
+      addCalendar, updateCalendar, deleteCalendar,
+      updatePreferences, updateMapConfig, executeShortcut, hasPermission
     ]
   );
 

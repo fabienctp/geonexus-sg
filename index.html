@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
   <head>
@@ -130,6 +129,11 @@
         outline: none;
       }
       
+      /* Force popup width to be auto to handle dynamic content size */
+      .leaflet-popup-content {
+        width: auto !important;
+      }
+
       /* FullCalendar Overrides */
       .fc {
         font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;

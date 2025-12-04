@@ -1,4 +1,3 @@
-
 import { type ClassValue, clsx } from "clsx"
 import { twMerge } from "tailwind-merge"
 
@@ -45,4 +44,30 @@ export function hexToTailwindHsl(hex: string): string {
   
   // Output strictly in format "H S% L%" as expected by the CSS variables in index.html
   return `${(h * 360).toFixed(1)} ${(s * 100).toFixed(1)}% ${(l * 100).toFixed(1)}%`;
+}
+
+export function getDirtyFields(original: any, current: any, labelMap?: Record<string, string>): string[] {
+  if (!original && !current) return [];
+  const safeOrig = original || {};
+  const safeCurr = current || {};
+
+  const changes: string[] = [];
+  const keys = new Set([...Object.keys(safeOrig), ...Object.keys(safeCurr)]);
+  
+  keys.forEach(key => {
+    // Skip internal keys if necessary
+    const v1 = safeOrig[key];
+    const v2 = safeCurr[key];
+    
+    // Deep comparison using JSON.stringify for simplicity
+    if (JSON.stringify(v1) !== JSON.stringify(v2)) {
+       // Ignore empty string vs undefined/null discrepancies
+       const isEmpty1 = v1 === '' || v1 === null || v1 === undefined;
+       const isEmpty2 = v2 === '' || v2 === null || v2 === undefined;
+       if (isEmpty1 && isEmpty2) return;
+
+       changes.push(labelMap?.[key] || key);
+    }
+  });
+  return changes;
 }

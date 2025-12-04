@@ -1,5 +1,6 @@
 
-export type FieldType = 'text' | 'number' | 'date' | 'select' | 'boolean';
+
+export type FieldType = 'text' | 'number' | 'date' | 'datetime' | 'select' | 'boolean';
 export type GeometryType = 'point' | 'line' | 'polygon' | 'mixed' | 'none';
 export type MapDisplayMode = 'tooltip' | 'dialog';
 
@@ -21,13 +22,18 @@ export interface FieldDefinition {
   filterable?: boolean;
 }
 
-export interface PlanningConfig {
-  enabled: boolean;
-  titleField: string; // Field name
-  startField: string; // Field name
-  endField?: string; // Field name
-  defaultView?: 'dayGridMonth' | 'timeGridWeek' | 'timeGridDay' | 'listWeek';
+// Standalone Calendar Schema
+export interface CalendarSchema {
+  id: string;
+  name: string;
+  tableId: string; // The source table
+  titleField: string; // Field name for event title
+  startField: string; // Field name for start date
+  endField?: string; // Field name for end date
+  defaultView: 'dayGridMonth' | 'timeGridWeek' | 'timeGridDay' | 'listWeek';
   timeZone?: string;
+  color?: string; // Optional override for event color
+  order?: number; // Display order in sidebar
 }
 
 export interface DashboardWidget {
@@ -96,8 +102,7 @@ export interface TableSchema {
   hoverFields?: string[]; 
   subLayerConfig?: SubLayerConfig; 
   dialogConfig?: DialogConfig;
-  planning?: PlanningConfig;
-  // Dashboard config removed from here
+  // planning removed - now handled by CalendarSchema
 }
 
 export interface FeatureGeometry {
@@ -140,6 +145,7 @@ export interface User {
   roleId: string;
   avatar?: string;
   createdAt: string;
+  password?: string; // Added for mock auth
 }
 
 export type ThemeMode = 'light' | 'dark' | 'system';
@@ -148,6 +154,21 @@ export interface AppPreferences {
   theme: ThemeMode;
   language: string;
   primaryColor: string; // Hex code
+}
+
+export interface TileLayerConfig {
+  id: string;
+  name: string;
+  url: string;
+  attribution?: string;
+  maxZoom?: number;
+  subdomains?: string; // e.g., 'abcd'
+  isDefaultVisible?: boolean;
+  defaultOpacity?: number; // 0 to 1
+}
+
+export interface MapConfig {
+  tileLayers: TileLayerConfig[];
 }
 
 export type ViewTab = 'map' | 'data' | 'dashboard' | 'planning' | 'settings' | 'profile';

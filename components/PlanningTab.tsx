@@ -1,4 +1,5 @@
 
+
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid';
@@ -8,7 +9,7 @@ import listPlugin from '@fullcalendar/list';
 import { useAppStore } from '../store';
 import { Calendar, Check, Eye, EyeOff, Plus, X, Clock, Edit, Trash2 } from 'lucide-react';
 import { useTranslation } from '../hooks/useTranslation';
-import { cn } from '../lib/utils';
+import { cn, getDirtyFields } from '../lib/utils';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from './ui/dialog';
 import { Button } from './ui/button';
 import { Label } from './ui/label';
@@ -17,131 +18,148 @@ import { Combobox } from './ui/combobox';
 import { DatePicker } from './ui/date-picker';
 import { Calendar as NavCalendar } from './ui/calendar';
 import { Switch } from './ui/switch';
-import { DataRecord, TableSchema } from '../types';
+import { DataRecord, CalendarSchema } from '../types';
 import { useToast } from './ui/use-toast';
 
 // Helper to generate ID
 const genId = () => Math.random().toString(36).substr(2, 9);
 
 export const PlanningTab: React.FC = () => {
-  const { schemas, records, addRecord, updateRecord, deleteRecord } = useAppStore();
+  const { schemas, records, calendars, addRecord, updateRecord, deleteRecord, hasPermission } = useAppStore();
   const { t } = useTranslation();
   const { toast } = useToast();
   const calendarRef = useRef<FullCalendar>(null);
 
-  // Get all schemas enabled for planning
-  const planningSchemas = useMemo(() => 
-    schemas.filter(s => s.planning?.enabled), 
-  [schemas]);
+  const canEdit = hasPermission('edit_data');
 
-  // State to track which calendars are visible
-  const [visibleSchemaIds, setVisibleSchemaIds] = useState<Set<string>>(new Set());
+  // State to track which calendars are visible (by Calendar ID, not Table ID)
+  const [visibleCalIds, setVisibleCalIds] = useState<Set<string>>(new Set());
   
   // Navigation State
   const [currentNavDate, setCurrentNavDate] = useState<Date | undefined>(new Date());
 
-  // Ref to track which schemas we have already initialized to prevent re-enabling hidden ones on update
+  // Ref to track which schemas we have already initialized
   const seenIdsRef = useRef<Set<string>>(new Set());
 
   // Creation/Editing State
   const [isSelectModalOpen, setIsSelectModalOpen] = useState(false);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
-  const [targetSchemaId, setTargetSchemaId] = useState<string | null>(null);
+  const [targetCalId, setTargetCalId] = useState<string | null>(null);
   const [editingEventId, setEditingEventId] = useState<string | null>(null);
   const [formData, setFormData] = useState<Record<string, any>>({});
+  const [initialFormData, setInitialFormData] = useState<Record<string, any>>({});
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const [selectedRange, setSelectedRange] = useState<{start: Date, end: Date | undefined, allDay: boolean} | null>(null);
+
+  // Unsaved Changes
+  const [showUnsavedDialog, setShowUnsavedDialog] = useState(false);
+  const [unsavedChanges, setUnsavedChanges] = useState<string[]>([]);
 
   // Detail View State
   const [selectedEvent, setSelectedEvent] = useState<any | null>(null);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
+
+  // Sorted calendars for Sidebar
+  const sortedCalendars = useMemo(() => {
+      return [...calendars].sort((a, b) => {
+          const orderA = a.order !== undefined ? a.order : 0;
+          const orderB = b.order !== undefined ? b.order : 0;
+          if (orderA !== orderB) return orderA - orderB;
+          return a.name.localeCompare(b.name);
+      });
+  }, [calendars]);
 
   // Smart Initialization of Visibility
   useEffect(() => {
     const newIds = new Set<string>();
     let hasNew = false;
 
-    planningSchemas.forEach(s => {
-      if (!seenIdsRef.current.has(s.id)) {
-        newIds.add(s.id);
-        seenIdsRef.current.add(s.id);
+    calendars.forEach(c => {
+      if (!seenIdsRef.current.has(c.id)) {
+        newIds.add(c.id);
+        seenIdsRef.current.add(c.id);
         hasNew = true;
       }
     });
 
     if (hasNew) {
-      setVisibleSchemaIds(prev => {
+      setVisibleCalIds(prev => {
         const next = new Set(prev);
         newIds.forEach(id => next.add(id));
         return next;
       });
     }
-  }, [planningSchemas]);
+  }, [calendars]);
 
-  // Apply default view and timezone from the primary visible schema
+  // Apply default view and timezone from the primary visible calendar
   useEffect(() => {
-    if (calendarRef.current && visibleSchemaIds.size > 0) {
+    if (calendarRef.current && visibleCalIds.size > 0) {
       const api = calendarRef.current.getApi();
-      // Find the first visible schema to determine the view
-      const primarySchemaId = Array.from(visibleSchemaIds)[0];
-      const primarySchema = schemas.find(s => s.id === primarySchemaId);
+      const primaryCalId = Array.from(visibleCalIds)[0];
+      const primaryCal = calendars.find(c => c.id === primaryCalId);
       
-      if (primarySchema && primarySchema.planning) {
-        const defaultView = primarySchema.planning.defaultView || 'dayGridMonth';
+      if (primaryCal) {
+        const defaultView = primaryCal.defaultView || 'dayGridMonth';
         if (api.view.type !== defaultView) {
            api.changeView(defaultView);
         }
       }
     }
-  }, [visibleSchemaIds, schemas]);
+  }, [visibleCalIds, calendars]);
 
-  // Get dominant timezone (from first visible schema or 'local')
+  // Get dominant timezone
   const dominantTimeZone = useMemo(() => {
-     const primarySchemaId = Array.from(visibleSchemaIds)[0];
-     const primarySchema = schemas.find(s => s.id === primarySchemaId);
-     return primarySchema?.planning?.timeZone || 'local';
-  }, [visibleSchemaIds, schemas]);
+     const primaryCalId = Array.from(visibleCalIds)[0];
+     const primaryCal = calendars.find(c => c.id === primaryCalId);
+     return primaryCal?.timeZone || 'local';
+  }, [visibleCalIds, calendars]);
 
   const toggleVisibility = (id: string) => {
-    const next = new Set(visibleSchemaIds);
+    const next = new Set(visibleCalIds);
     if (next.has(id)) {
       next.delete(id);
     } else {
       next.add(id);
     }
-    setVisibleSchemaIds(next);
+    setVisibleCalIds(next);
   };
 
   const events = useMemo(() => {
     return records.flatMap(record => {
-      if (!visibleSchemaIds.has(record.tableId)) return [];
+      // Find which calendar this record belongs to
+      const calendar = calendars.find(c => c.tableId === record.tableId);
+      if (!calendar || !visibleCalIds.has(calendar.id)) return [];
 
       const schema = schemas.find(s => s.id === record.tableId);
-      if (!schema || !schema.planning?.enabled) return [];
+      if (!schema) return [];
       
-      const { titleField, startField, endField } = schema.planning;
+      const { titleField, startField, endField } = calendar;
 
       if (!record.data[startField]) return [];
 
       const title = record.data[titleField] ? String(record.data[titleField]) : 'Untitled';
+      
+      // Prefer calendar specific color, fallback to schema color
+      const eventColor = calendar.color || schema.color;
 
       return [{
         id: record.id,
         title: `${title}`,
         start: record.data[startField],
         end: endField ? record.data[endField] : undefined,
-        backgroundColor: schema.color,
-        borderColor: schema.color,
+        backgroundColor: eventColor,
+        borderColor: eventColor,
         textColor: '#ffffff',
         extendedProps: {
           fullData: record.data,
           schemaName: schema.name,
-          schemaColor: schema.color,
-          tableId: record.tableId
+          schemaColor: eventColor,
+          tableId: record.tableId,
+          calendarId: calendar.id
         }
       }];
     });
-  }, [schemas, records, visibleSchemaIds]);
+  }, [schemas, records, calendars, visibleCalIds]);
 
   // --- Handlers ---
 
@@ -153,6 +171,7 @@ export const PlanningTab: React.FC = () => {
   };
 
   const handleDateSelect = (selectInfo: any) => {
+    if (!canEdit) return; // Prevent selection if no permission
     const range = {
         start: selectInfo.start,
         end: selectInfo.end,
@@ -161,10 +180,10 @@ export const PlanningTab: React.FC = () => {
     setSelectedRange(range);
     setEditingEventId(null);
 
-    const activeOptions = planningSchemas.filter(s => visibleSchemaIds.has(s.id));
+    const activeOptions = calendars.filter(c => visibleCalIds.has(c.id));
     
-    if (planningSchemas.length === 1) {
-        prepareCreateForm(planningSchemas[0].id, range);
+    if (calendars.length === 1) {
+        prepareCreateForm(calendars[0].id, range);
     } else if (activeOptions.length === 1) {
         prepareCreateForm(activeOptions[0].id, range);
     } else {
@@ -177,45 +196,60 @@ export const PlanningTab: React.FC = () => {
     setSelectedRange(today);
     setEditingEventId(null);
 
-    if (planningSchemas.length === 1) {
-        prepareCreateForm(planningSchemas[0].id, today);
+    if (calendars.length === 1) {
+        prepareCreateForm(calendars[0].id, today);
     } else {
         setIsSelectModalOpen(true);
     }
   };
 
-  const prepareCreateForm = (schemaId: string, range: {start: Date, end: Date | undefined, allDay: boolean}) => {
-    const schema = schemas.find(s => s.id === schemaId);
-    if (!schema || !schema.planning) return;
+  const prepareCreateForm = (calId: string, range: {start: Date, end: Date | undefined, allDay: boolean}) => {
+    const calendar = calendars.find(c => c.id === calId);
+    if (!calendar) return;
+    
+    const schema = schemas.find(s => s.id === calendar.tableId);
+    if (!schema) return;
 
-    // Auto-enable visibility if adding to a hidden calendar
-    if (!visibleSchemaIds.has(schemaId)) {
-       toggleVisibility(schemaId);
-       toast({ title: "Calendar Enabled", description: `${schema.name} is now visible.`, variant: "info" });
+    // Auto-enable visibility
+    if (!visibleCalIds.has(calId)) {
+       toggleVisibility(calId);
+       toast({ title: "Calendar Enabled", description: `${calendar.name} is now visible.`, variant: "info" });
     }
 
-    setTargetSchemaId(schemaId);
+    setTargetCalId(calId);
     setFormErrors({});
     
     const newFormData: any = {};
     const formatDate = (d: Date) => d.toISOString().split('T')[0];
+    // Format full datetime ISO string for datetime-local inputs
+    const formatDateTime = (d: Date) => d.toISOString().slice(0, 16);
 
-    newFormData[schema.planning.startField] = formatDate(range.start);
+    const startFieldDef = schema.fields.find(f => f.name === calendar.startField);
+    if (startFieldDef?.type === 'datetime') {
+        newFormData[calendar.startField] = formatDateTime(range.start);
+    } else {
+        newFormData[calendar.startField] = formatDate(range.start);
+    }
     
-    if (schema.planning.endField && range.end) {
+    if (calendar.endField && range.end) {
         let endDate = range.end;
         if (range.allDay) {
-             // Subtract 1 day for display if it's all day selection
              const d = new Date(range.end);
              d.setDate(d.getDate() - 1);
              endDate = d;
-             // Fix: if end became before start (single day click), reset to start
              if (endDate < range.start) endDate = range.start;
         }
-        newFormData[schema.planning.endField] = formatDate(endDate);
+        
+        const endFieldDef = schema.fields.find(f => f.name === calendar.endField);
+        if (endFieldDef?.type === 'datetime') {
+            newFormData[calendar.endField] = formatDateTime(endDate);
+        } else {
+            newFormData[calendar.endField] = formatDate(endDate);
+        }
     }
 
     setFormData(newFormData);
+    setInitialFormData({ ...newFormData });
     setIsSelectModalOpen(false);
     setIsCreateModalOpen(true);
   };
@@ -223,13 +257,41 @@ export const PlanningTab: React.FC = () => {
   const handleEditEvent = () => {
     if (!selectedEvent) return;
     
-    setTargetSchemaId(selectedEvent.tableId);
+    setTargetCalId(selectedEvent.calendarId);
     setFormData({ ...selectedEvent.fullData });
+    setInitialFormData({ ...selectedEvent.fullData });
     setEditingEventId(selectedEvent.id);
     setFormErrors({});
     
     setIsDetailModalOpen(false);
     setIsCreateModalOpen(true);
+  };
+
+  const attemptCloseModal = () => {
+     // Identify changes
+     const activeCalendar = calendars.find(c => c.id === targetCalId);
+     const targetSchema = activeCalendar ? schemas.find(s => s.id === activeCalendar.tableId) : null;
+     
+     const labelMap: Record<string, string> = {};
+     targetSchema?.fields.forEach(f => labelMap[f.name] = f.label);
+
+     const changes = getDirtyFields(initialFormData, formData, labelMap);
+     if (changes.length > 0) {
+         setUnsavedChanges(changes);
+         setShowUnsavedDialog(true);
+     } else {
+         forceCloseModal();
+     }
+  };
+
+  const forceCloseModal = () => {
+    setIsCreateModalOpen(false);
+    setFormData({});
+    setInitialFormData({});
+    setTargetCalId(null);
+    setEditingEventId(null);
+    setFormErrors({});
+    setShowUnsavedDialog(false);
   };
 
   const handleDeleteEvent = () => {
@@ -244,9 +306,12 @@ export const PlanningTab: React.FC = () => {
 
   const handleSaveEvent = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!targetSchemaId) return;
+    if (!targetCalId) return;
 
-    const schema = schemas.find(s => s.id === targetSchemaId);
+    const calendar = calendars.find(c => c.id === targetCalId);
+    if (!calendar) return;
+    
+    const schema = schemas.find(s => s.id === calendar.tableId);
     if (schema) {
       const errors: Record<string, string> = {};
       schema.fields.forEach(field => {
@@ -277,7 +342,7 @@ export const PlanningTab: React.FC = () => {
     } else {
       const newRecord: DataRecord = {
           id: genId(),
-          tableId: targetSchemaId,
+          tableId: calendar.tableId,
           geometry: null,
           data: formData,
           createdAt: new Date().toISOString(),
@@ -287,11 +352,7 @@ export const PlanningTab: React.FC = () => {
       toast({ title: "Event Created", description: "Added to calendar.", variant: "success" });
     }
     
-    setIsCreateModalOpen(false);
-    setFormData({});
-    setTargetSchemaId(null);
-    setEditingEventId(null);
-    setFormErrors({});
+    forceCloseModal();
   };
 
   const handleEventClick = (info: any) => {
@@ -306,15 +367,16 @@ export const PlanningTab: React.FC = () => {
     setIsDetailModalOpen(true);
   };
 
-  // Target Schema for Form Rendering
-  const targetSchema = schemas.find(s => s.id === targetSchemaId);
+  // Resolve target objects for form rendering
+  const activeCalendar = calendars.find(c => c.id === targetCalId);
+  const targetSchema = activeCalendar ? schemas.find(s => s.id === activeCalendar.tableId) : null;
 
-  if (planningSchemas.length === 0) {
+  if (calendars.length === 0) {
     return (
        <div className="flex items-center justify-center h-full text-muted-foreground flex-col gap-2">
         <Calendar className="w-12 h-12 opacity-20" />
         <p>{t('plan.noPlan')}</p>
-        <p className="text-sm">Go to Configuration &gt; Planning to enable tables or create a new event calendar.</p>
+        <p className="text-sm">Go to Configuration &gt; Calendars to set up event schedules.</p>
       </div>
     );
   }
@@ -324,7 +386,6 @@ export const PlanningTab: React.FC = () => {
        {/* Sidebar for Calendars */}
        <div className="w-[320px] border-r bg-muted/10 flex flex-col shrink-0">
           
-          {/* Inline Navigation Calendar */}
           <div className="p-4 border-b bg-background flex justify-center">
               <NavCalendar 
                 mode="single"
@@ -338,17 +399,22 @@ export const PlanningTab: React.FC = () => {
             <h2 className="font-semibold tracking-tight flex items-center gap-2">
               <Calendar className="w-4 h-4" /> Calendars
             </h2>
-            <Button className="w-full justify-start" size="sm" onClick={handleManualAdd}>
-              <Plus className="w-4 h-4 mr-2" /> Add Event
-            </Button>
+            {canEdit && (
+              <Button className="w-full justify-start" size="sm" onClick={handleManualAdd}>
+                <Plus className="w-4 h-4 mr-2" /> Add Event
+              </Button>
+            )}
           </div>
           <div className="p-3 space-y-1 overflow-y-auto flex-1">
-            {planningSchemas.map(schema => {
-              const isVisible = visibleSchemaIds.has(schema.id);
+            {sortedCalendars.map(cal => {
+              const schema = schemas.find(s => s.id === cal.tableId);
+              const isVisible = visibleCalIds.has(cal.id);
+              const color = cal.color || schema?.color || '#ccc';
+
               return (
                 <button
-                  key={schema.id}
-                  onClick={() => toggleVisibility(schema.id)}
+                  key={cal.id}
+                  onClick={() => toggleVisibility(cal.id)}
                   className={cn(
                     "w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-all",
                     isVisible 
@@ -361,18 +427,15 @@ export const PlanningTab: React.FC = () => {
                       "w-4 h-4 rounded flex items-center justify-center border transition-colors",
                       isVisible ? "border-transparent" : "border-muted-foreground/40"
                     )}
-                    style={{ backgroundColor: isVisible ? schema.color : 'transparent' }}
+                    style={{ backgroundColor: isVisible ? color : 'transparent' }}
                   >
                     {isVisible && <Check className="w-3 h-3 text-white" />}
                   </div>
-                  <span className="flex-1 text-left truncate">{schema.name}</span>
+                  <span className="flex-1 text-left truncate">{cal.name}</span>
                   {isVisible ? <Eye className="w-3 h-3 opacity-50" /> : <EyeOff className="w-3 h-3 opacity-50" />}
                 </button>
               );
             })}
-          </div>
-          <div className="p-4 text-xs text-muted-foreground border-t bg-muted/20">
-             <p>Select a calendar to toggle visibility.</p>
           </div>
        </div>
 
@@ -393,7 +456,7 @@ export const PlanningTab: React.FC = () => {
              center: 'title',
              right: 'dayGridMonth,timeGridWeek,timeGridDay,listWeek'
            }}
-           selectable={true}
+           selectable={canEdit}
            selectMirror={true}
            select={handleDateSelect}
            events={events}
@@ -405,7 +468,7 @@ export const PlanningTab: React.FC = () => {
          />
        </div>
 
-       {/* --- Dialogs (Select Calendar, Create/Edit Event, Event Details) are same as before --- */}
+       {/* Select Calendar Dialog */}
        <Dialog open={isSelectModalOpen} onOpenChange={setIsSelectModalOpen}>
           <DialogContent className="sm:max-w-[425px]">
              <DialogHeader>
@@ -413,33 +476,38 @@ export const PlanningTab: React.FC = () => {
                <DialogDescription>Choose which calendar to add this event to.</DialogDescription>
              </DialogHeader>
              <div className="grid gap-2 py-4 max-h-[60vh] overflow-y-auto">
-                {planningSchemas.map(schema => (
-                   <button
-                     key={schema.id}
-                     onClick={() => selectedRange && prepareCreateForm(schema.id, selectedRange)}
-                     className="flex items-center gap-3 p-3 rounded-md border hover:bg-accent hover:text-accent-foreground transition-colors text-left"
-                   >
-                      <div className="w-4 h-4 rounded-full" style={{background: schema.color}} />
-                      <div className="flex-1 font-medium">
-                        {schema.name}
-                        {!visibleSchemaIds.has(schema.id) && <span className="text-xs text-muted-foreground ml-2">(Hidden)</span>}
-                      </div>
-                      <Plus className="w-4 h-4 text-muted-foreground" />
-                   </button>
-                ))}
+                {calendars.map(cal => {
+                   const schema = schemas.find(s => s.id === cal.tableId);
+                   const color = cal.color || schema?.color;
+                   return (
+                     <button
+                       key={cal.id}
+                       onClick={() => selectedRange && prepareCreateForm(cal.id, selectedRange)}
+                       className="flex items-center gap-3 p-3 rounded-md border hover:bg-accent hover:text-accent-foreground transition-colors text-left"
+                     >
+                        <div className="w-4 h-4 rounded-full" style={{background: color}} />
+                        <div className="flex-1 font-medium">
+                          {cal.name}
+                          {!visibleCalIds.has(cal.id) && <span className="text-xs text-muted-foreground ml-2">(Hidden)</span>}
+                        </div>
+                        <Plus className="w-4 h-4 text-muted-foreground" />
+                     </button>
+                   )
+                })}
              </div>
           </DialogContent>
        </Dialog>
 
-       <Dialog open={isCreateModalOpen} onOpenChange={setIsCreateModalOpen}>
+       {/* Create/Edit Modal */}
+       <Dialog open={isCreateModalOpen} onOpenChange={(open) => !open && attemptCloseModal()}>
          <DialogContent>
             <DialogHeader>
                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full" style={{background: targetSchema?.color}} />
+                  <div className="w-3 h-3 rounded-full" style={{background: activeCalendar?.color || targetSchema?.color}} />
                   <DialogTitle>
                     {editingEventId 
-                      ? `Edit ${targetSchema?.name || 'Event'}` 
-                      : targetSchema ? `New ${targetSchema.name} Event` : 'New Event'}
+                      ? `Edit ${activeCalendar?.name || 'Event'}` 
+                      : activeCalendar ? `New ${activeCalendar.name} Event` : 'New Event'}
                   </DialogTitle>
                </div>
             </DialogHeader>
@@ -476,6 +544,14 @@ export const PlanningTab: React.FC = () => {
                               onChange={(date) => setFormData({...formData, [field.name]: date ? date.toISOString().split('T')[0] : ''})}
                               className={cn(formErrors[field.name] && "border-red-500")}
                            />
+                        ) : field.type === 'datetime' ? (
+                           <Input
+                              type="datetime-local"
+                              required={field.required}
+                              value={formData[field.name] ? String(formData[field.name]).slice(0, 16) : ''}
+                              onChange={e => setFormData({...formData, [field.name]: e.target.value})}
+                              className={cn(formErrors[field.name] && "border-red-500 focus-visible:ring-red-500")}
+                           />
                         ) : (
                            <Input 
                               type={field.type === 'number' ? 'number' : 'text'}
@@ -492,12 +568,13 @@ export const PlanningTab: React.FC = () => {
             )}
 
             <DialogFooter>
-               <Button variant="outline" onClick={() => setIsCreateModalOpen(false)}>Cancel</Button>
+               <Button variant="outline" onClick={attemptCloseModal}>Cancel</Button>
                <Button type="submit" form="calendar-form">{editingEventId ? 'Update Event' : 'Create Event'}</Button>
             </DialogFooter>
          </DialogContent>
        </Dialog>
 
+       {/* Event Details Modal */}
        <Dialog open={isDetailModalOpen} onOpenChange={setIsDetailModalOpen}>
           <DialogContent>
              {selectedEvent && (
@@ -517,11 +594,11 @@ export const PlanningTab: React.FC = () => {
                         <Clock className="w-5 h-5 text-muted-foreground shrink-0 mt-0.5" />
                         <div className="space-y-1">
                            <div className="font-medium">
-                              {selectedEvent.start?.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+                              {selectedEvent.start?.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                            </div>
                            {selectedEvent.end && (
                               <div className="text-sm text-muted-foreground">
-                                 to {selectedEvent.end.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+                                 to {selectedEvent.end.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                               </div>
                            )}
                         </div>
@@ -543,9 +620,12 @@ export const PlanningTab: React.FC = () => {
                                   </span>
                                 );
                               }
-                           } else if (fieldDef?.type === 'boolean') {
-                              const isTrue = val === true || val === 'true';
-                              displayVal = isTrue ? (fieldDef.booleanLabels?.true || 'Yes') : (fieldDef.booleanLabels?.false || 'No');
+                           } else if (fieldDef?.type === 'datetime' && val) {
+                               try {
+                                   displayVal = new Date(val as string).toLocaleString();
+                               } catch (e) {
+                                   displayVal = String(val);
+                               }
                            }
 
                            return (
@@ -561,19 +641,44 @@ export const PlanningTab: React.FC = () => {
                   </div>
 
                   <DialogFooter className="flex justify-between sm:justify-between gap-2">
-                     <Button variant="destructive" onClick={handleDeleteEvent}>
-                        <Trash2 className="w-4 h-4 mr-2" /> Delete
-                     </Button>
+                     {canEdit && (
+                       <Button variant="destructive" onClick={handleDeleteEvent}>
+                          <Trash2 className="w-4 h-4 mr-2" /> Delete
+                       </Button>
+                     )}
                      <div className="flex gap-2">
                         <Button variant="outline" onClick={() => setIsDetailModalOpen(false)}>Close</Button>
-                        <Button onClick={handleEditEvent}>
-                           <Edit className="w-4 h-4 mr-2" /> Edit
-                        </Button>
+                        {canEdit && (
+                          <Button onClick={handleEditEvent}>
+                             <Edit className="w-4 h-4 mr-2" /> Edit
+                          </Button>
+                        )}
                      </div>
                   </DialogFooter>
                 </>
              )}
           </DialogContent>
+       </Dialog>
+       
+       {/* Unsaved Changes Dialog */}
+       <Dialog open={showUnsavedDialog} onOpenChange={setShowUnsavedDialog}>
+            <DialogContent>
+                <DialogHeader>
+                    <DialogTitle>{t('common.unsaved_changes')}</DialogTitle>
+                    <DialogDescription>{t('common.unsaved_desc')}</DialogDescription>
+                </DialogHeader>
+                <div className="py-2">
+                    <ul className="list-disc list-inside text-sm text-muted-foreground">
+                        {unsavedChanges.map(field => (
+                            <li key={field}>{field}</li>
+                        ))}
+                    </ul>
+                </div>
+                <DialogFooter>
+                    <Button variant="outline" onClick={forceCloseModal} className="text-destructive hover:text-destructive">{t('common.discard')}</Button>
+                    <Button onClick={() => setShowUnsavedDialog(false)}>{t('common.continue_editing')}</Button>
+                </DialogFooter>
+            </DialogContent>
        </Dialog>
     </div>
   );

@@ -32,9 +32,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ activeSchema, dash
   const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  // Reset analysis when schema changes
+  // Pagination for the table
+  const [tablePage, setTablePage] = useState(1);
+  const TABLE_ITEMS_PER_PAGE = 10;
+
+  // Reset analysis and page when schema changes
   useEffect(() => {
     setAiAnalysis(null);
+    setTablePage(1);
   }, [activeSchema.id]);
 
   // Filter records based on tableId AND configured filters in dashboard
@@ -75,6 +80,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ activeSchema, dash
 
   // Basic Stats Calculation
   const recordCount = activeRecords.length;
+  
+  // Table Pagination Slice
+  const tableTotalPages = Math.ceil(recordCount / TABLE_ITEMS_PER_PAGE);
+  const tableRecords = activeRecords.slice((tablePage - 1) * TABLE_ITEMS_PER_PAGE, tablePage * TABLE_ITEMS_PER_PAGE);
 
   // Helper to generate data for a specific widget
   const getWidgetData = (fieldId: string) => {
@@ -245,7 +254,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ activeSchema, dash
                             </TableRow>
                          </TableHeader>
                          <TableBody>
-                            {activeRecords.slice(0, 50).map(r => (
+                            {tableRecords.map(r => (
                                <TableRow key={r.id}>
                                   {activeSchema.fields.map(f => {
                                      const val = r.data[f.name];
@@ -275,9 +284,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ activeSchema, dash
                          </TableBody>
                       </Table>
                    </div>
-                   {activeRecords.length > 50 && (
-                      <div className="p-2 text-center text-xs text-muted-foreground bg-muted/10 border-t">
-                         {t('dash.showing_50')}
+                   {tableTotalPages > 1 && (
+                      <div className="flex justify-center gap-2 p-3 bg-muted/5 border-t">
+                          <Button variant="outline" size="sm" onClick={() => setTablePage(p => Math.max(1, p-1))} disabled={tablePage === 1}>Prev</Button>
+                          <span className="text-sm flex items-center">{tablePage} / {tableTotalPages}</span>
+                          <Button variant="outline" size="sm" onClick={() => setTablePage(p => Math.min(tableTotalPages, p+1))} disabled={tablePage === tableTotalPages}>Next</Button>
                       </div>
                    )}
                 </CardContent>

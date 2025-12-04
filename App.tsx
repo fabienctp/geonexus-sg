@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { AppProvider, useAppStore } from './store';
 import { MapTab } from './components/MapTab';
@@ -55,10 +54,26 @@ const IconRenderer = ({ name, className }: { name: string, className?: string })
 };
 
 function AppContent({ onLogout }: { onLogout: () => void }) {
-  const { activeTab, setActiveTab, shortcuts, executeShortcut } = useAppStore();
+  const { activeTab, setActiveTab, shortcuts, executeShortcut, setCurrentUser, hasPermission } = useAppStore();
   const { t } = useTranslation();
 
+  const handleLogout = () => {
+    setCurrentUser(null);
+    onLogout();
+  };
+
   const renderContent = () => {
+    // Basic protection if user manually sets tab state but lacks permission
+    if (activeTab === 'map' && !hasPermission('view_map')) return <div className="p-8 text-center text-muted-foreground">Access Denied</div>;
+    if (activeTab === 'data' && !hasPermission('view_data')) return <div className="p-8 text-center text-muted-foreground">Access Denied</div>;
+    if (activeTab === 'dashboard' && !hasPermission('view_dashboard')) return <div className="p-8 text-center text-muted-foreground">Access Denied</div>;
+    if (activeTab === 'planning' && !hasPermission('view_planning')) return <div className="p-8 text-center text-muted-foreground">Access Denied</div>;
+    
+    // Settings has internal checks, but we can block top level
+    if (activeTab === 'settings' && !hasPermission('sys_admin') && !hasPermission('manage_schemas') && !hasPermission('manage_users')) {
+        return <div className="p-8 text-center text-muted-foreground">Access Denied</div>;
+    }
+
     switch(activeTab) {
       case 'map': return <MapTab />;
       case 'data': return <DataTab />;
@@ -79,10 +94,18 @@ function AppContent({ onLogout }: { onLogout: () => void }) {
         </div>
 
         <div className="flex-1 flex flex-col w-full gap-4">
-          <NavButton icon={<Map />} label={t('nav.map')} active={activeTab === 'map'} onClick={() => setActiveTab('map')} />
-          <NavButton icon={<Database />} label={t('nav.data')} active={activeTab === 'data'} onClick={() => setActiveTab('data')} />
-          <NavButton icon={<LayoutDashboard />} label={t('nav.dash')} active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} />
-          <NavButton icon={<Calendar />} label={t('nav.plan')} active={activeTab === 'planning'} onClick={() => setActiveTab('planning')} />
+          {hasPermission('view_map') && (
+            <NavButton icon={<Map />} label={t('nav.map')} active={activeTab === 'map'} onClick={() => setActiveTab('map')} />
+          )}
+          {hasPermission('view_data') && (
+            <NavButton icon={<Database />} label={t('nav.data')} active={activeTab === 'data'} onClick={() => setActiveTab('data')} />
+          )}
+          {hasPermission('view_dashboard') && (
+            <NavButton icon={<LayoutDashboard />} label={t('nav.dash')} active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} />
+          )}
+          {hasPermission('view_planning') && (
+            <NavButton icon={<Calendar />} label={t('nav.plan')} active={activeTab === 'planning'} onClick={() => setActiveTab('planning')} />
+          )}
           
           {/* Quick Actions Menu */}
           <div className="w-full flex justify-center mt-2">
@@ -110,7 +133,9 @@ function AppContent({ onLogout }: { onLogout: () => void }) {
         </div>
 
         <div className="mb-4 flex flex-col gap-6 w-full items-center">
-          <NavButton icon={<Settings />} label={t('nav.config')} active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} />
+          {(hasPermission('sys_admin') || hasPermission('manage_schemas') || hasPermission('manage_users')) && (
+             <NavButton icon={<Settings />} label={t('nav.config')} active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} />
+          )}
           
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -125,12 +150,14 @@ function AppContent({ onLogout }: { onLogout: () => void }) {
                 <UserCircle className="mr-2 h-4 w-4" />
                 <span>{t('menu.profile')}</span>
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setActiveTab('settings')}>
-                <Settings className="mr-2 h-4 w-4" />
-                <span>{t('menu.settings')}</span>
-              </DropdownMenuItem>
+              {(hasPermission('sys_admin') || hasPermission('manage_schemas') || hasPermission('manage_users')) && (
+                  <DropdownMenuItem onClick={() => setActiveTab('settings')}>
+                    <Settings className="mr-2 h-4 w-4" />
+                    <span>{t('menu.settings')}</span>
+                  </DropdownMenuItem>
+              )}
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={onLogout} className="text-destructive focus:text-destructive">
+              <DropdownMenuItem onClick={handleLogout} className="text-destructive focus:text-destructive">
                 <LogOut className="mr-2 h-4 w-4" />
                 <span>{t('menu.logout')}</span>
               </DropdownMenuItem>

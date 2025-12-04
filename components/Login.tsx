@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from './ui/card';
 import { Input } from './ui/input';
@@ -22,7 +21,7 @@ interface LoginProps {
 
 export const Login: React.FC<LoginProps> = ({ onLogin }) => {
   const { t, lang } = useTranslation();
-  const { updatePreferences } = useAppStore();
+  const { updatePreferences, users, setCurrentUser } = useAppStore();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -51,7 +50,14 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
     setIsLoading(true);
 
     setTimeout(() => {
-      if (username === 'admin' && password === 'admin') {
+      // Find user by username or email and match password
+      const user = users.find(u => 
+        (u.username === username || u.email === username) && 
+        u.password === password
+      );
+
+      if (user) {
+        setCurrentUser(user);
         onLogin();
       } else {
         setErrors({ general: t('login.error') });
@@ -66,7 +72,15 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
     setErrors({});
     setIsLoading(true);
     setTimeout(() => {
-      onLogin();
+       const admin = users.find(u => u.username === 'admin');
+       if (admin) {
+           setCurrentUser(admin);
+           onLogin();
+       } else {
+           // Fallback if admin user was deleted/modified
+           setErrors({ general: "Demo user not found." });
+           setIsLoading(false);
+       }
     }, 800);
   };
 

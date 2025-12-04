@@ -1,5 +1,4 @@
-
-import { TableSchema, UserRole, User, Permission, AppPreferences, DataRecord, Shortcut, DashboardSchema } from './types';
+import { TableSchema, UserRole, User, Permission, AppPreferences, DataRecord, Shortcut, DashboardSchema, CalendarSchema, TileLayerConfig, MapConfig } from './types';
 
 export const DEFAULT_MAP_CENTER: [number, number] = [48.8566, 2.3522]; // Paris
 export const DEFAULT_ZOOM = 13;
@@ -8,6 +7,7 @@ export const FIELD_TYPES = [
   { value: 'text', label: 'Text' },
   { value: 'number', label: 'Number' },
   { value: 'date', label: 'Date' },
+  { value: 'datetime', label: 'Date & Time' },
   { value: 'boolean', label: 'Checkbox' },
   { value: 'select', label: 'List' }, // Changed from Dropdown to List
 ];
@@ -106,7 +106,24 @@ export const INITIAL_USERS: User[] = [
     username: 'admin',
     email: 'admin@geonexus.com',
     roleId: 'admin_role',
-    createdAt: new Date().toISOString()
+    createdAt: new Date().toISOString(),
+    password: 'admin'
+  },
+  {
+    id: 'u2',
+    username: 'editor',
+    email: 'editor@geonexus.com',
+    roleId: 'editor_role',
+    createdAt: new Date().toISOString(),
+    password: 'editor'
+  },
+  {
+    id: 'u3',
+    username: 'viewer',
+    email: 'viewer@geonexus.com',
+    roleId: 'viewer_role',
+    createdAt: new Date().toISOString(),
+    password: 'viewer'
   }
 ];
 
@@ -138,13 +155,6 @@ export const INITIAL_SCHEMAS: TableSchema[] = [
         { value: 'Low', color: '#22c55e', label: 'Low' }
       ]
     },
-    planning: {
-      enabled: true,
-      titleField: 'title',
-      startField: 'date',
-      defaultView: 'dayGridMonth',
-      timeZone: 'local'
-    },
     fields: [
       { id: 'f1', name: 'title', label: 'Title', type: 'text', required: true, sortable: true, filterable: true },
       { id: 'f2', name: 'priority', label: 'Priority', type: 'select', required: true, options: optsC([{l:'Low', c:'#22c55e'}, {l:'Medium', c:'#eab308'}, {l:'High', c:'#f97316'}, {l:'Critical', c:'#ef4444'}]), sortable: true, filterable: true },
@@ -165,7 +175,6 @@ export const INITIAL_SCHEMAS: TableSchema[] = [
     mapDisplayMode: 'dialog',
     hoverFields: ['type', 'condition'],
     dialogConfig: { size: 'medium' },
-    planning: { enabled: false, titleField: '', startField: '' },
     fields: [
       { id: 'a1', name: 'type', label: 'Asset Type', type: 'select', required: true, options: opts(['Lamp Post', 'Bench', 'Trash Can', 'Signage']), sortable: true, filterable: true },
       { id: 'a2', name: 'condition', label: 'Condition', type: 'select', required: true, options: optsC([{l:'New', c:'#22c55e'}, {l:'Good', c:'#84cc16'}, {l:'Fair', c:'#facc15'}, {l:'Poor', c:'#f43f5e'}]), sortable: true, filterable: true },
@@ -185,7 +194,6 @@ export const INITIAL_SCHEMAS: TableSchema[] = [
     allowNonSpatialEntry: false,
     mapDisplayMode: 'tooltip',
     hoverFields: ['line_name', 'status'],
-    planning: { enabled: false, titleField: '', startField: '' },
     fields: [
       { id: 'l1', name: 'line_name', label: 'Line Name', type: 'text', required: true, sortable: true, filterable: true },
       { id: 'l2', name: 'status', label: 'Status', type: 'select', required: true, options: opts(['Operational', 'Construction', 'Closed']), sortable: true, filterable: true },
@@ -203,7 +211,6 @@ export const INITIAL_SCHEMAS: TableSchema[] = [
     allowNonSpatialEntry: false,
     mapDisplayMode: 'tooltip',
     hoverFields: ['name'],
-    planning: { enabled: false, titleField: '', startField: '' },
     fields: [
       { id: 'p1', name: 'name', label: 'Park Name', type: 'text', required: true, sortable: true, filterable: true },
       { id: 'p2', name: 'maintenance', label: 'Maintenance Day', type: 'select', required: false, options: opts(['Monday', 'Wednesday', 'Friday']), sortable: true, filterable: true },
@@ -220,12 +227,24 @@ export const INITIAL_SCHEMAS: TableSchema[] = [
     isDefaultVisibleInMap: false,
     allowNonSpatialEntry: true,
     mapDisplayMode: 'tooltip',
-    planning: { enabled: false, titleField: '', startField: '' },
     fields: [
       { id: 'e1', name: 'fullname', label: 'Full Name', type: 'text', required: true, sortable: true, filterable: true },
       { id: 'e2', name: 'role', label: 'Role', type: 'select', required: true, options: opts(['Technician', 'Manager', 'Driver']), sortable: true, filterable: true },
       { id: 'e3', name: 'hired_date', label: 'Hired Date', type: 'date', required: true, sortable: true },
     ]
+  }
+];
+
+export const INITIAL_CALENDARS: CalendarSchema[] = [
+  {
+    id: 'cal1',
+    name: 'Intervention Schedule',
+    tableId: '1',
+    titleField: 'title',
+    startField: 'date',
+    defaultView: 'dayGridMonth',
+    timeZone: 'local',
+    order: 0
   }
 ];
 
@@ -458,6 +477,46 @@ export const LANGUAGES = [
   { value: 'de', label: 'Deutsch' }
 ];
 
+export const DEFAULT_TILE_LAYERS: TileLayerConfig[] = [
+  {
+    id: 'carto_voyager',
+    name: 'Carto Voyager',
+    url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+    subdomains: 'abcd',
+    isDefaultVisible: true,
+    defaultOpacity: 1
+  },
+  {
+    id: 'osm_standard',
+    name: 'OpenStreetMap',
+    url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    attribution: '&copy; OpenStreetMap contributors',
+    isDefaultVisible: false,
+    defaultOpacity: 1
+  },
+  {
+    id: 'carto_dark',
+    name: 'Carto Dark Matter',
+    url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+    attribution: '&copy; CARTO',
+    isDefaultVisible: false,
+    defaultOpacity: 1
+  },
+  {
+    id: 'esri_satellite',
+    name: 'Esri Satellite',
+    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    attribution: 'Tiles &copy; Esri',
+    isDefaultVisible: false,
+    defaultOpacity: 1
+  }
+];
+
+export const INITIAL_MAP_CONFIG: MapConfig = {
+    tileLayers: DEFAULT_TILE_LAYERS
+};
+
 export const TRANSLATIONS: Record<string, Record<string, string>> = {
   en: {
     // Common
@@ -484,6 +543,10 @@ export const TRANSLATIONS: Record<string, Record<string, string>> = {
     'common.ok': 'OK',
     'common.operator': 'Operator',
     'common.value': 'Value',
+    'common.unsaved_changes': 'Unsaved Changes',
+    'common.unsaved_desc': 'You have unsaved changes in the following fields:',
+    'common.discard': 'Discard Changes',
+    'common.continue_editing': 'Continue Editing',
 
     // Login
     'login.title': 'GeoNexus',
@@ -527,6 +590,7 @@ export const TRANSLATIONS: Record<string, Record<string, string>> = {
     'cfg.title': 'Configuration',
     'cfg.tables': 'Table Schemas',
     'cfg.dash': 'Dashboards',
+    'cfg.cals': 'Calendars', // Added
     'cfg.users': 'Users & Roles',
     'cfg.shortcuts': 'Shortcuts',
     'cfg.general': 'General Settings',

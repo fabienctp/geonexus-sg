@@ -3,7 +3,7 @@ import * as React from "react"
 import { ChevronLeft, ChevronRight } from "lucide-react"
 import { cn } from "../../lib/utils"
 import { buttonVariants } from "./button"
-import { Select } from "./select"
+import { Combobox } from "./combobox"
 import { 
   format, 
   addMonths, 
@@ -98,24 +98,22 @@ function Calendar({
           {/* Header */}
           <div className="flex justify-between items-center pt-1 relative gap-1">
             <div className="flex items-center gap-1 flex-1">
-               <Select 
-                 value={getMonth(currentMonth).toString()}
-                 onChange={(e) => handleMonthChange(e.target.value)}
-                 className="h-8 text-xs py-1 px-2 w-[110px]"
-               >
-                  {months.map((m, i) => (
-                      <option key={i} value={i}>{m}</option>
-                  ))}
-               </Select>
-               <Select 
-                 value={getYear(currentMonth).toString()}
-                 onChange={(e) => handleYearChange(e.target.value)}
-                 className="h-8 text-xs py-1 px-2 w-[80px]"
-               >
-                  {years.map(y => (
-                      <option key={y} value={y}>{y}</option>
-                  ))}
-               </Select>
+               <div className="w-[110px]">
+                 <Combobox 
+                    options={months.map((m, i) => ({ value: i.toString(), label: m }))}
+                    value={getMonth(currentMonth).toString()}
+                    onChange={handleMonthChange}
+                    className="h-8 text-xs py-1 px-2"
+                 />
+               </div>
+               <div className="w-[80px]">
+                 <Combobox 
+                    options={years.map(y => ({ value: y.toString(), label: y.toString() }))}
+                    value={getYear(currentMonth).toString()}
+                    onChange={handleYearChange}
+                    className="h-8 text-xs py-1 px-2"
+                 />
+               </div>
             </div>
             <div className="space-x-1 flex items-center">
                <button 

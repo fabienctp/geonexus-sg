@@ -1,736 +1,754 @@
 
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useAppStore } from '../store';
-import { Edit, Trash2, Plus, FileText, Search, Map as MapIcon, ArrowUpDown, ArrowUp, ArrowDown, Filter, X, ChevronLeft, ChevronRight, ChevronDown, AlertTriangle, Download, FileSpreadsheet, FileJson, Image as ImageIcon, Table as TableIcon, Globe } from 'lucide-react';
+import { DataRecord, TableSchema } from '../types';
+import { useTranslation } from '../hooks/useTranslation';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
-import { Label } from './ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from './ui/dialog';
+import { Label } from './ui/label';
 import { Combobox } from './ui/combobox';
 import { DatePicker } from './ui/date-picker';
 import { Switch } from './ui/switch';
-import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from './ui/dropdown-menu';
-import { cn } from '../lib/utils';
+import { Select } from './ui/select';
 import { useToast } from './ui/use-toast';
-import { useTranslation } from '../hooks/useTranslation';
-import { DataRecord, TableSchema } from '../types';
-import html2canvas from 'html2canvas';
+import { cn, getDirtyFields } from '../lib/utils';
+import { 
+  Plus, Search, Edit, Trash2, MapPin, Filter, 
+  ChevronLeft, ChevronRight, ArrowUpDown, ArrowUp, ArrowDown,
+  LayoutList, Map as MapIcon, Database, SlidersHorizontal, X,
+  ChevronsLeft, ChevronsRight
+} from 'lucide-react';
 
-// Helper to generate ID
 const genId = () => Math.random().toString(36).substr(2, 9);
 
 export const DataTab: React.FC = () => {
-  const { schemas, records, addRecord, deleteRecord, updateRecord, setActiveTab, setMapState, dataState, setDataState } = useAppStore();
-  const { toast } = useToast();
+  const { schemas, records, mapState, dataState, setDataState, addRecord, updateRecord, deleteRecord, setMapState, setActiveTab, hasPermission } = useAppStore();
   const { t } = useTranslation();
-  const tableContainerRef = useRef<HTMLDivElement>(null);
-  
-  // Sidebar State
-  const [tableSearch, setTableSearch] = useState('');
-  const [groupsOpen, setGroupsOpen] = useState({ spatial: true, data: true });
+  const { toast } = useToast();
 
-  // Filter visible schemas
-  const visibleSchemas = schemas.filter(s => s.visibleInData);
-  
-  // Use global state
-  const selectedSchemaId = dataState.activeTableId || '';
-  const searchTerm = dataState.searchQuery || '';
-  
-  const setSelectedSchemaId = (id: string) => {
-     setDataState({ activeTableId: id, searchQuery: '' }); 
-     // Reset local view state on table change
-     setSortConfig(null);
-     setColumnFilters({});
-     setShowFilters(false);
-     setCurrentPage(1);
-  };
-  const setSearchTerm = (term: string) => setDataState({ searchQuery: term });
-
-  // Local view state for DataTab
-  const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
-  const [columnFilters, setColumnFilters] = useState<Record<string, string>>({});
-  const [showFilters, setShowFilters] = useState(false);
-  
-  // Pagination State
+  const [localSearch, setLocalSearch] = useState(dataState.searchQuery || '');
   const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 15;
+  const [itemsPerPage, setItemsPerPage] = useState(15);
 
-  // Edit/Create State
-  const [editingRecord, setEditingRecord] = useState<DataRecord | null>(null);
+  const canEdit = hasPermission('edit_data');
+
+  // Table Features State
+  const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
+  const [showFilters, setShowFilters] = useState(false);
+  const [columnFilters, setColumnFilters] = useState<Record<string, string>>({});
+
+  // Editing State
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-  const [isCreating, setIsCreating] = useState(false); // Track if we are creating a new record
+  const [editingRecordId, setEditingRecordId] = useState<string | null>(null);
   const [formData, setFormData] = useState<Record<string, any>>({});
+  const [initialFormData, setInitialFormData] = useState<Record<string, any>>({});
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
-
-  // Delete Confirmation State
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
-  // Set default selected schema when visibleSchemas changes
-  useEffect(() => {
-    if (visibleSchemas.length > 0 && !visibleSchemas.find(s => s.id === selectedSchemaId)) {
-      // Prioritize the default data view configuration
-      const defaultSchema = visibleSchemas.find(s => s.isDefaultInData);
-      setSelectedSchemaId(defaultSchema ? defaultSchema.id : visibleSchemas[0].id);
-    }
-  }, [visibleSchemas, selectedSchemaId]);
+  // Unsaved Changes
+  const [showUnsavedDialog, setShowUnsavedDialog] = useState(false);
+  const [unsavedChanges, setUnsavedChanges] = useState<string[]>([]);
 
-  const activeSchema = visibleSchemas.find(s => s.id === selectedSchemaId);
+  // Active Schema Logic
+  // Default to first available if none selected
+  const activeSchemaId = dataState.activeTableId || (schemas.length > 0 ? schemas[0].id : null);
+  const activeSchema = schemas.find(s => s.id === activeSchemaId);
+
+  // Group Schemas for Sidebar
+  const spatialSchemas = schemas.filter(s => s.geometryType !== 'none');
+  const alphanumericSchemas = schemas.filter(s => s.geometryType === 'none');
   
-  // Logic: Sidebar Grouping & Filtering
-  const { spatialTables, dataTables } = useMemo(() => {
-      const filtered = visibleSchemas.filter(s => s.name.toLowerCase().includes(tableSearch.toLowerCase()));
-      return {
-          spatialTables: filtered.filter(s => s.geometryType !== 'none'),
-          dataTables: filtered.filter(s => s.geometryType === 'none')
-      };
-  }, [visibleSchemas, tableSearch]);
+  // Update local search when global state changes
+  React.useEffect(() => {
+     setLocalSearch(dataState.searchQuery);
+  }, [dataState.searchQuery]);
 
-  // Logic: Filtering & Sorting
-  const filteredRecords = useMemo(() => {
-    if (!activeSchema) return [];
-    
-    let result = records.filter(r => r.tableId === selectedSchemaId);
+  // Handle Table Selection
+  const handleTableChange = (id: string) => {
+     setDataState({ activeTableId: id, searchQuery: '' });
+     setLocalSearch('');
+     setColumnFilters({});
+     setSortConfig(null);
+     setCurrentPage(1);
+  };
 
-    // 1. Apply Column Filters
-    if (showFilters) {
-       result = result.filter(r => {
-         return Object.entries(columnFilters).every(([key, filterVal]) => {
-            if (!filterVal) return true;
-            const val = String(r.data[key] || '').toLowerCase();
-            return val.includes(String(filterVal).toLowerCase());
+  // --- Filtering & Sorting Logic ---
+  const processedRecords = useMemo(() => {
+     if (!activeSchema) return [];
+     
+     // 1. Filter by Table
+     let result = records.filter(r => r.tableId === activeSchema.id);
+     
+     // 2. Global Search
+     if (localSearch) {
+        const lower = localSearch.toLowerCase();
+        result = result.filter(r => 
+           Object.values(r.data).some(v => String(v).toLowerCase().includes(lower))
+        );
+     }
+
+     // 3. Column Filters
+     if (showFilters) {
+         Object.entries(columnFilters).forEach(([key, filterValue]) => {
+             if (!filterValue) return;
+             const lowerFilter = String(filterValue).toLowerCase();
+             result = result.filter(r => {
+                 const val = r.data[key];
+                 return String(val || '').toLowerCase().includes(lowerFilter);
+             });
          });
-       });
-    }
+     }
 
-    // 2. Apply Global Search
-    if (searchTerm) {
-      const term = String(searchTerm).toLowerCase();
-      result = result.filter(r => 
-        Object.values(r.data).some((val: any) => 
-          String(val).toLowerCase().includes(term)
-        )
-      );
-    }
+     // 4. Sorting
+     if (sortConfig) {
+         result.sort((a, b) => {
+             const valA = a.data[sortConfig.key];
+             const valB = b.data[sortConfig.key];
+             
+             // Handle Dates
+             if (activeSchema.fields.find(f => f.name === sortConfig.key)?.type === 'date') {
+                 const dateA = new Date(valA || 0).getTime();
+                 const dateB = new Date(valB || 0).getTime();
+                 return sortConfig.direction === 'asc' ? dateA - dateB : dateB - dateA;
+             }
 
-    // 3. Apply Sort
-    if (sortConfig) {
-      result.sort((a, b) => {
-        const valA = a.data[sortConfig.key];
-        const valB = b.data[sortConfig.key];
+             // Handle Numbers
+             if (typeof valA === 'number' && typeof valB === 'number') {
+                 return sortConfig.direction === 'asc' ? valA - valB : valB - valA;
+             }
 
-        if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1;
-        if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1;
-        return 0;
-      });
-    }
+             // Default String Comparison
+             const strA = String(valA || '').toLowerCase();
+             const strB = String(valB || '').toLowerCase();
+             if (strA < strB) return sortConfig.direction === 'asc' ? -1 : 1;
+             if (strA > strB) return sortConfig.direction === 'asc' ? 1 : -1;
+             return 0;
+         });
+     }
 
-    return result;
-  }, [activeSchema, records, selectedSchemaId, columnFilters, showFilters, searchTerm, sortConfig]);
+     return result;
+  }, [records, activeSchema, localSearch, columnFilters, sortConfig, showFilters]);
 
-  // Reset pagination when data changes
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [filteredRecords.length, activeSchema?.id]);
+  // Pagination
+  const totalPages = Math.ceil(processedRecords.length / itemsPerPage);
+  const currentRecords = processedRecords.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
-  // Pagination Calculation
-  const totalPages = Math.ceil(filteredRecords.length / itemsPerPage) || 1;
-  const displayedRecords = filteredRecords.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
-
-  const handleSort = (key: string) => {
-    setSortConfig(current => {
-      if (current?.key === key) {
-        return current.direction === 'asc' ? { key, direction: 'desc' } : null;
+  // Adjust current page if out of bounds (e.g. after filtering)
+  React.useEffect(() => {
+      if (currentPage > totalPages && totalPages > 0) {
+          setCurrentPage(totalPages);
       }
-      return { key, direction: 'asc' };
-    });
+  }, [totalPages, currentPage]);
+
+  // Sorting Handler
+  const handleSort = (key: string) => {
+      setSortConfig(current => {
+          if (current?.key === key) {
+              return current.direction === 'asc' ? { key, direction: 'desc' } : null;
+          }
+          return { key, direction: 'asc' };
+      });
   };
 
-  const handleDelete = (id: string) => {
-    setDeleteConfirmId(id);
+  // CRUD Handlers
+  const handleEditClick = (record: DataRecord) => {
+     setEditingRecordId(record.id);
+     setFormData({ ...record.data });
+     setInitialFormData({ ...record.data });
+     setFormErrors({});
+     setIsEditModalOpen(true);
   };
 
-  const confirmDelete = () => {
-    if (deleteConfirmId) {
-      deleteRecord(deleteConfirmId);
-      toast({ title: t('data.record_deleted'), description: "The data entry has been removed.", variant: "info" });
-      setDeleteConfirmId(null);
-    }
+  const handleCreateClick = () => {
+     setEditingRecordId(null);
+     setFormData({});
+     setInitialFormData({});
+     setFormErrors({});
+     setIsEditModalOpen(true);
   };
 
-  const handleEdit = (record: DataRecord) => {
-    setEditingRecord(record);
-    setFormData({ ...record.data });
-    setFormErrors({});
-    setIsCreating(false);
-    setIsEditModalOpen(true);
+  const attemptCloseModal = () => {
+     const labelMap: Record<string, string> = {};
+     activeSchema?.fields.forEach(f => labelMap[f.name] = f.label);
+
+     const changes = getDirtyFields(initialFormData, formData, labelMap);
+     if (changes.length > 0) {
+         setUnsavedChanges(changes);
+         setShowUnsavedDialog(true);
+     } else {
+         forceCloseModal();
+     }
   };
 
-  const handleAddNonSpatial = () => {
-    if (!activeSchema) return;
-    setEditingRecord(null);
-    setFormData({});
-    setFormErrors({});
-    setIsCreating(true);
-    setIsEditModalOpen(true);
+  const forceCloseModal = () => {
+     setIsEditModalOpen(false);
+     setFormData({});
+     setInitialFormData({});
+     setFormErrors({});
+     setEditingRecordId(null);
+     setShowUnsavedDialog(false);
   };
 
-  const handleAddMap = () => {
-    if (!activeSchema) return;
-    setMapState({ activeLayerId: activeSchema.id, toolMode: 'add' });
-    setActiveTab('map');
-    toast({ title: t('data.map_activated'), description: "Click on the map to add the new feature.", variant: "info" });
-  };
-
-  const handleExportCSV = () => {
-    if (!activeSchema || filteredRecords.length === 0) return;
-
-    const headers = activeSchema.fields.map(f => f.label);
-    const keys = activeSchema.fields.map(f => f.name);
-
-    const csvRows = [
-        headers.join(','),
-        ...filteredRecords.map(record => {
-            return keys.map(key => {
-                const field = activeSchema.fields.find(f => f.name === key);
-                let val = record.data[key];
-                
-                // Format value for readability
-                if (field?.type === 'boolean') {
-                    const isTrue = val === true || val === 'true';
-                    val = isTrue ? (field.booleanLabels?.true || 'Yes') : (field.booleanLabels?.false || 'No');
-                } else if (field?.type === 'select' && field.options) {
-                    // Try to map value to label if exists, otherwise keep value
-                    const opt = field.options.find(o => o.value === val);
-                    if (opt) val = opt.label;
-                }
-                
-                // Escape quotes and wrap in quotes
-                const stringVal = String(val || '').replace(/"/g, '""');
-                return `"${stringVal}"`;
-            }).join(',');
-        })
-    ];
-
-    const csvString = csvRows.join('\n');
-    const blob = new Blob([csvString], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${activeSchema.name}_export.csv`;
-    a.click();
-    toast({ title: t('data.export_success'), description: "CSV downloaded.", variant: "success" });
-  };
-
-  const handleExportJSON = () => {
-    if (!activeSchema || filteredRecords.length === 0) return;
-    const exportData = filteredRecords.map(r => r.data);
-    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${activeSchema.name}_export.json`;
-    a.click();
-    toast({ title: t('data.export_success'), description: "JSON downloaded.", variant: "success" });
-  };
-
-  const handleExportGeoJSON = () => {
-    if (!activeSchema || filteredRecords.length === 0) return;
-    
-    const features = filteredRecords.map(r => ({
-        type: "Feature",
-        geometry: r.geometry,
-        properties: {
-            id: r.id,
-            ...r.data
-        }
-    }));
-
-    const featureCollection = {
-        type: "FeatureCollection",
-        features: features
-    };
-
-    const blob = new Blob([JSON.stringify(featureCollection, null, 2)], { type: 'application/geo+json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${activeSchema.name}_export.geojson`;
-    a.click();
-    toast({ title: t('data.export_success'), description: "GeoJSON downloaded.", variant: "success" });
-  };
-
-  const handleExportPNG = async () => {
-    if (!tableContainerRef.current) return;
-    try {
-        const canvas = await html2canvas(tableContainerRef.current, {
-            backgroundColor: '#ffffff',
-            scale: 2
-        });
-        const link = document.createElement('a');
-        link.download = `${activeSchema?.name || 'data'}_screenshot.png`;
-        link.href = canvas.toDataURL();
-        link.click();
-        toast({ title: t('data.export_success'), description: "Image downloaded.", variant: "success" });
-    } catch (e) {
-        console.error(e);
-    }
+  const handleFormDataChange = (field: string, value: any) => {
+     setFormData(prev => ({ ...prev, [field]: value }));
+     if (formErrors[field]) {
+        setFormErrors(prev => ({ ...prev, [field]: '' }));
+     }
   };
 
   const handleSaveEdit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!activeSchema) return;
+     e.preventDefault();
+     if (!activeSchema) return;
 
-    const errors: Record<string, string> = {};
-    activeSchema.fields.forEach(field => {
-      if (field.required) {
-        const val = formData[field.name];
-        if (val === undefined || val === null || val === '') {
-          errors[field.name] = `${field.label} is required`;
+     const errors: Record<string, string> = {};
+     activeSchema.fields.forEach(f => {
+        if (f.required) {
+           const val = formData[f.name];
+           if (val === undefined || val === null || val === '') {
+              errors[f.name] = `${f.label} is required`;
+           }
         }
-      }
-    });
+     });
 
-    if (Object.keys(errors).length > 0) {
-      setFormErrors(errors);
-      return;
-    }
+     if (Object.keys(errors).length > 0) {
+        setFormErrors(errors);
+        return;
+     }
 
-    if (isCreating) {
-        // Create new record
-        const newRecord: DataRecord = {
-            id: genId(),
-            tableId: activeSchema.id,
-            geometry: null, // Non-spatial entry
-            data: formData,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
+     if (editingRecordId) {
+        const original = records.find(r => r.id === editingRecordId);
+        if (original) {
+           updateRecord({
+              ...original,
+              data: formData,
+              updatedAt: new Date().toISOString()
+           });
+           toast({ title: t('data.record_updated'), variant: 'success' });
+        }
+     } else {
+        const newRec: DataRecord = {
+           id: genId(),
+           tableId: activeSchema.id,
+           geometry: null,
+           data: formData,
+           createdAt: new Date().toISOString(),
+           updatedAt: new Date().toISOString()
         };
-        addRecord(newRecord);
-        toast({ title: t('data.record_added'), description: "New data entry created.", variant: "success" });
-    } else if (editingRecord) {
-        // Update existing
-        updateRecord({
-          ...editingRecord,
-          data: formData,
-          updatedAt: new Date().toISOString()
-        });
-        toast({ title: t('data.record_updated'), description: "Changes saved successfully.", variant: "success" });
-    }
-    
-    setIsEditModalOpen(false);
-    setEditingRecord(null);
-    setIsCreating(false);
+        addRecord(newRec);
+        toast({ title: t('data.record_added'), variant: 'success' });
+     }
+     forceCloseModal();
   };
 
-  if (visibleSchemas.length === 0) {
-    return (
-      <div className="flex items-center justify-center h-full text-muted-foreground flex-col gap-2">
-        <FileText className="w-12 h-12 opacity-20" />
-        <p>{t('data.noTables')}</p>
-        <p className="text-sm">{t('data.go_config')}</p>
-      </div>
-    );
-  }
+  const handleDeleteClick = (id: string) => {
+      setDeleteConfirmId(id);
+  };
 
-  // Helper for Sidebar List Item
-  const TableListItem = ({ schema }: { schema: TableSchema }) => (
-    <button
-        key={schema.id}
-        onClick={() => setSelectedSchemaId(schema.id)}
-        className={cn(
-        "w-full text-left px-3 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2 group",
-        selectedSchemaId === schema.id 
-            ? "bg-primary/10 text-primary border border-primary/20" 
-            : "text-muted-foreground hover:bg-muted hover:text-foreground border border-transparent"
-        )}
-    >
-        <div className="w-2 h-2 rounded-full shrink-0" style={{background: schema.color}}></div>
-        <span className="truncate flex-1">{schema.name}</span>
-        <span className={cn(
-            "text-[10px] px-1.5 py-0.5 rounded border transition-colors",
-            selectedSchemaId === schema.id ? "bg-background/50 border-primary/20" : "bg-muted border-border group-hover:bg-background"
-        )}>
-           {records.filter(r => r.tableId === schema.id).length}
-        </span>
-    </button>
-  );
+  const confirmDelete = () => {
+      if (deleteConfirmId) {
+          deleteRecord(deleteConfirmId);
+          toast({ title: t('data.record_deleted'), variant: 'info' });
+          setDeleteConfirmId(null);
+      }
+  };
+
+  const locateOnMap = (record: DataRecord) => {
+      if (!record.geometry) {
+          toast({ title: "No Geometry", description: "This record has no map location.", variant: "destructive" });
+          return;
+      }
+      setActiveTab('map');
+      
+      let center: [number, number] | undefined;
+      if (record.geometry.type === 'Point') {
+          center = [record.geometry.coordinates[0], record.geometry.coordinates[1]];
+      } else if (record.geometry.coordinates && record.geometry.coordinates.length > 0) {
+          const first = record.geometry.coordinates[0];
+          center = Array.isArray(first) ? [first[0], first[1]] : undefined;
+      }
+
+      setMapState({
+          activeLayerId: record.tableId,
+          center: center,
+          zoom: 16,
+          visibleLayers: Array.from(new Set([...mapState.visibleLayers, record.tableId]))
+      });
+  };
+
+  // Helper to render pagination numbers
+  const renderPaginationNumbers = () => {
+    const pages = [];
+    const maxVisible = 5;
+    
+    // Logic to show a sliding window of pages
+    let startPage = Math.max(1, currentPage - 2);
+    let endPage = Math.min(totalPages, startPage + maxVisible - 1);
+    
+    // Adjust start if we're near the end
+    if (endPage - startPage < maxVisible - 1) {
+        startPage = Math.max(1, endPage - maxVisible + 1);
+    }
+
+    // Always show first page if we are far from it
+    if (startPage > 1) {
+        pages.push(
+            <Button key={1} variant="outline" size="sm" className="w-8 h-8 p-0" onClick={() => setCurrentPage(1)}>1</Button>
+        );
+        if (startPage > 2) {
+            pages.push(<span key="start-ellipsis" className="flex items-center justify-center w-8 text-muted-foreground text-xs">...</span>);
+        }
+    }
+
+    for (let i = startPage; i <= endPage; i++) {
+        pages.push(
+            <Button
+                key={i}
+                variant={currentPage === i ? "default" : "outline"}
+                size="sm"
+                className="w-8 h-8 p-0"
+                onClick={() => setCurrentPage(i)}
+            >
+                {i}
+            </Button>
+        );
+    }
+
+    // Always show last page if we are far from it
+    if (endPage < totalPages) {
+        if (endPage < totalPages - 1) {
+            pages.push(<span key="end-ellipsis" className="flex items-center justify-center w-8 text-muted-foreground text-xs">...</span>);
+        }
+        pages.push(
+            <Button key={totalPages} variant="outline" size="sm" className="w-8 h-8 p-0" onClick={() => setCurrentPage(totalPages)}>{totalPages}</Button>
+        );
+    }
+
+    return pages;
+  };
+
+  const isCreating = !editingRecordId;
 
   return (
-    <div className="flex h-full bg-background">
-      {/* Sidebar - Tables List */}
-      <div className="w-72 border-r bg-muted/10 flex flex-col shrink-0">
-        <div className="p-4 border-b space-y-3">
-          <h2 className="font-semibold tracking-tight">{t('data.tables')}</h2>
-          <div className="relative">
-             <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
-             <Input 
-                className="h-8 pl-8 text-xs bg-background" 
-                placeholder="Filter tables..." 
-                value={tableSearch} 
-                onChange={e => setTableSearch(e.target.value)} 
-             />
-          </div>
-        </div>
-        
-        <div className="flex-1 overflow-y-auto p-2 space-y-4">
-            {/* Spatial Group */}
-            {spatialTables.length > 0 && (
-                <div className="space-y-1">
-                    <button 
-                        onClick={() => setGroupsOpen(prev => ({...prev, spatial: !prev.spatial}))}
-                        className="w-full flex items-center justify-between px-2 text-xs font-bold text-muted-foreground uppercase hover:text-foreground transition-colors"
-                    >
-                        <div className="flex items-center gap-1.5">
-                            <MapIcon className="w-3.5 h-3.5" />
-                            Spatial Tables
-                        </div>
-                        {groupsOpen.spatial ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-                    </button>
-                    
-                    {groupsOpen.spatial && (
-                        <div className="space-y-1 mt-1 pl-1">
-                            {spatialTables.map(schema => TableListItem({ schema }))}
-                        </div>
-                    )}
-                </div>
-            )}
-
-            {/* Data Group */}
-            {dataTables.length > 0 && (
-                <div className="space-y-1">
-                    <button 
-                        onClick={() => setGroupsOpen(prev => ({...prev, data: !prev.data}))}
-                        className="w-full flex items-center justify-between px-2 text-xs font-bold text-muted-foreground uppercase hover:text-foreground transition-colors"
-                    >
-                        <div className="flex items-center gap-1.5">
-                            <TableIcon className="w-3.5 h-3.5" />
-                            Data Tables
-                        </div>
-                        {groupsOpen.data ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-                    </button>
-                    
-                    {groupsOpen.data && (
-                        <div className="space-y-1 mt-1 pl-1">
-                            {dataTables.map(schema => TableListItem({ schema }))}
-                        </div>
-                    )}
-                </div>
-            )}
-
-            {spatialTables.length === 0 && dataTables.length === 0 && (
-                <div className="text-center text-muted-foreground text-xs py-4 italic">
-                    No tables match "{tableSearch}"
-                </div>
-            )}
-        </div>
-      </div>
-
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col h-full overflow-hidden">
-        {activeSchema ? (
-          <>
-            <div className="p-6 border-b flex justify-between items-center bg-card">
-               <div>
-                 <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-                   {activeSchema.name}
-                   <span className="w-3 h-3 rounded-full ring-2 ring-offset-2 ring-offset-background" style={{background: activeSchema.color}}></span>
-                 </h1>
-                 <p className="text-muted-foreground text-sm mt-1">
-                   {activeSchema.geometryType !== 'none' ? t('data.spatial') : t('data.alphanumeric')}
-                 </p>
-               </div>
-               <div className="flex gap-3">
-                 <div className="relative w-64">
-                    <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                    <Input 
-                      type="search" 
-                      placeholder={t('data.search')}
-                      value={searchTerm}
-                      onChange={(e) => setSearchTerm(e.target.value)}
-                      className="pl-9"
-                    />
-                 </div>
-                 
-                 {/* Filters Toggle */}
-                 <Button 
-                   variant={showFilters ? "secondary" : "outline"}
-                   onClick={() => setShowFilters(!showFilters)}
-                   title={t('data.toggle_filters')}
-                 >
-                   <Filter className={cn("w-4 h-4 mr-2", showFilters && "text-primary")} />
-                   {t('data.filters')}
-                 </Button>
-
-                 {/* Export Dropdown */}
-                 <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                        <Button variant="outline">
-                            <Download className="w-4 h-4 mr-2" /> {t('data.export')} <ChevronDown className="w-4 h-4 ml-2 opacity-50" />
-                        </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={handleExportCSV}>
-                            <FileSpreadsheet className="w-4 h-4 mr-2" /> {t('data.export_csv')}
-                        </DropdownMenuItem>
-                        <DropdownMenuItem onClick={handleExportJSON}>
-                            <FileJson className="w-4 h-4 mr-2" /> {t('data.export_json')}
-                        </DropdownMenuItem>
-                        {activeSchema.geometryType !== 'none' && (
-                            <DropdownMenuItem onClick={handleExportGeoJSON}>
-                                <Globe className="w-4 h-4 mr-2" /> {t('data.export_geojson')}
-                            </DropdownMenuItem>
-                        )}
-                        <DropdownMenuItem onClick={handleExportPNG}>
-                            <ImageIcon className="w-4 h-4 mr-2" /> {t('data.export_png')}
-                        </DropdownMenuItem>
-                    </DropdownMenuContent>
-                 </DropdownMenu>
-
-                 {/* Add Button Logic */}
-                 {activeSchema.geometryType !== 'none' ? (
-                    activeSchema.allowNonSpatialEntry ? (
-                        <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                                <Button>
-                                    <Plus className="w-4 h-4 mr-2" /> {t('data.add')} <ChevronDown className="w-4 h-4 ml-2 opacity-50" />
-                                </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                                <DropdownMenuItem onClick={handleAddMap}>
-                                    <MapIcon className="w-4 h-4 mr-2" /> {t('data.add_map')}
-                                </DropdownMenuItem>
-                                <DropdownMenuItem onClick={handleAddNonSpatial}>
-                                    <FileText className="w-4 h-4 mr-2" /> {t('data.add_data')}
-                                </DropdownMenuItem>
-                            </DropdownMenuContent>
-                        </DropdownMenu>
-                    ) : (
-                        <Button onClick={handleAddMap}>
-                            <MapIcon className="w-4 h-4 mr-2" /> {t('data.add')}
-                        </Button>
-                    )
-                 ) : (
-                    <Button onClick={handleAddNonSpatial}>
-                        <Plus className="w-4 h-4 mr-2" /> {t('data.add')}
-                    </Button>
-                 )}
-               </div>
+    <div className="flex h-full bg-background overflow-hidden">
+        {/* SIDEBAR: Table List */}
+        <div className="w-64 border-r bg-muted/10 flex flex-col flex-shrink-0">
+            <div className="p-4 border-b bg-background/50 backdrop-blur">
+                <h2 className="font-semibold text-lg tracking-tight flex items-center gap-2">
+                    <Database className="w-5 h-5 text-primary" />
+                    Data Explorer
+                </h2>
             </div>
+            <div className="flex-1 overflow-y-auto p-3 space-y-6">
+                {spatialSchemas.length > 0 && (
+                    <div className="space-y-2">
+                        <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider px-2">
+                           {t('data.spatial')}
+                        </h3>
+                        <div className="space-y-1">
+                            {spatialSchemas.map(s => (
+                                <button
+                                    key={s.id}
+                                    onClick={() => handleTableChange(s.id)}
+                                    className={cn(
+                                        "w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-all group relative",
+                                        activeSchemaId === s.id 
+                                            ? "bg-primary/10 text-primary font-medium" 
+                                            : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                                    )}
+                                >
+                                    <div className={cn("w-1 h-8 absolute left-0 top-1/2 -translate-y-1/2 bg-primary rounded-r-full transition-transform", activeSchemaId === s.id ? "scale-y-100" : "scale-y-0")} />
+                                    <span className="w-2.5 h-2.5 rounded-full ring-2 ring-white shadow-sm" style={{background: s.color}} />
+                                    <span className="truncate">{s.name}</span>
+                                    {activeSchemaId === s.id && <MapIcon className="w-3 h-3 ml-auto opacity-50" />}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                )}
 
-            <div className="flex-1 overflow-auto p-6">
-              <div className="rounded-md border bg-card flex flex-col h-full" ref={tableContainerRef}>
-                <div className="flex-1 overflow-auto">
-                  <Table>
-                    <TableHeader className="sticky top-0 bg-card z-10">
-                      <TableRow>
-                        {activeSchema.fields.map(field => (
-                          <TableHead 
-                            key={field.id}
-                            className={cn(
-                              field.sortable !== false ? "cursor-pointer hover:bg-muted/50 transition-colors select-none" : ""
-                            )}
-                            onClick={() => field.sortable !== false && handleSort(field.name)}
-                          >
-                            <div className="flex items-center gap-2">
-                              {field.label}
-                              {field.sortable !== false && (
-                                 sortConfig?.key === field.name ? (
-                                   sortConfig.direction === 'asc' ? <ArrowUp className="w-3 h-3 text-primary" /> : <ArrowDown className="w-3 h-3 text-primary" />
-                                 ) : (
-                                   <ArrowUpDown className="w-3 h-3 opacity-30" />
-                                 )
-                              )}
-                            </div>
-                          </TableHead>
-                        ))}
-                        <TableHead className="text-right w-[100px]">Actions</TableHead>
-                      </TableRow>
-                      
-                      {/* Filter Row */}
-                      {showFilters && (
-                        <TableRow className="bg-muted/30 hover:bg-muted/30">
-                          {activeSchema.fields.map(field => (
-                             <TableCell key={field.id} className="p-2">
-                               {field.filterable !== false ? (
-                                 <Input 
-                                   className="h-7 text-xs bg-background" 
-                                   placeholder={`Filter ${field.label}...`}
-                                   value={columnFilters[field.name] || ''}
-                                   onChange={(e) => setColumnFilters(prev => ({...prev, [field.name]: e.target.value}))}
-                                 />
-                               ) : null}
-                             </TableCell>
-                          ))}
-                          <TableCell className="text-right p-2">
-                             <Button variant="ghost" size="sm" className="h-7 text-xs text-muted-foreground" onClick={() => setColumnFilters({})}>
-                               {t('data.clear')}
-                             </Button>
-                          </TableCell>
-                        </TableRow>
-                      )}
-                    </TableHeader>
-                    <TableBody>
-                      {displayedRecords.length === 0 ? (
-                        <TableRow>
-                          <TableCell colSpan={activeSchema.fields.length + 1} className="h-24 text-center text-muted-foreground">
-                            <div className="flex flex-col items-center gap-2">
-                               <FileText className="w-8 h-8 opacity-20" />
-                               {t('data.noRecords')}
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      ) : (
-                        displayedRecords.map(record => (
-                          <TableRow key={record.id}>
-                            {activeSchema.fields.map(field => {
-                              const val = record.data[field.name];
-                              let displayVal: React.ReactNode = String(val || '-');
-                              
-                              if (field.type === 'select' && field.options) {
-                                 const opt = field.options.find(o => o.value === val);
-                                 if (opt?.color) {
-                                   displayVal = (
-                                     <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium" style={{backgroundColor: `${opt.color}20`, color: opt.color, border: `1px solid ${opt.color}40`}}>
-                                       <span className="w-1.5 h-1.5 rounded-full mr-1.5" style={{backgroundColor: opt.color}} />
-                                       {String(val)}
-                                     </span>
-                                   );
-                                 }
-                              } else if (field.type === 'boolean') {
-                                  const isTrue = val === true || val === 'true';
-                                  displayVal = (
-                                    <span className={cn("inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium", isTrue ? "bg-green-100 text-green-700 border border-green-200" : "bg-slate-100 text-slate-600 border border-slate-200")}>
-                                      {isTrue ? (field.booleanLabels?.true || 'Yes') : (field.booleanLabels?.false || 'No')}
-                                    </span>
-                                  );
-                              }
-                              return (
-                                <TableCell key={field.id} className="font-medium">
-                                  {displayVal}
-                                </TableCell>
-                              );
-                            })}
-                            <TableCell className="text-right">
-                              <div className="flex justify-end gap-1">
-                                <Button variant="ghost" size="icon" onClick={() => handleEdit(record)} className="text-muted-foreground hover:text-primary hover:bg-primary/10 h-8 w-8">
-                                  <Edit className="w-4 h-4" />
-                                </Button>
-                                <Button variant="ghost" size="icon" onClick={() => handleDelete(record.id)} className="text-destructive hover:text-destructive hover:bg-destructive/10 h-8 w-8">
-                                  <Trash2 className="w-4 h-4" />
-                                </Button>
-                              </div>
-                            </TableCell>
-                          </TableRow>
-                        ))
-                      )}
-                    </TableBody>
-                  </Table>
-                </div>
+                {alphanumericSchemas.length > 0 && (
+                    <div className="space-y-2">
+                        <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider px-2">
+                           {t('data.alphanumeric')}
+                        </h3>
+                        <div className="space-y-1">
+                            {alphanumericSchemas.map(s => (
+                                <button
+                                    key={s.id}
+                                    onClick={() => handleTableChange(s.id)}
+                                    className={cn(
+                                        "w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-all group relative",
+                                        activeSchemaId === s.id 
+                                            ? "bg-primary/10 text-primary font-medium" 
+                                            : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                                    )}
+                                >
+                                    <div className={cn("w-1 h-8 absolute left-0 top-1/2 -translate-y-1/2 bg-primary rounded-r-full transition-transform", activeSchemaId === s.id ? "scale-y-100" : "scale-y-0")} />
+                                    <LayoutList className="w-4 h-4" />
+                                    <span className="truncate">{s.name}</span>
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                )}
                 
-                {/* Pagination */}
-                <div className="border-t p-4 flex items-center justify-between bg-card">
-                   <div className="text-sm text-muted-foreground">
-                      {t('data.showing')} {Math.min(filteredRecords.length, (currentPage - 1) * itemsPerPage + 1)} {t('data.to')} {Math.min(filteredRecords.length, currentPage * itemsPerPage)} {t('data.of')} {filteredRecords.length} {t('data.records')}
-                   </div>
-                   <div className="flex items-center gap-2">
-                      <Button variant="outline" size="icon" onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1}>
-                         <ChevronLeft className="w-4 h-4" />
-                      </Button>
-                      <span className="text-sm font-medium">Page {currentPage} {t('data.of').replace('of', '/')} {totalPages}</span>
-                      <Button variant="outline" size="icon" onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages}>
-                         <ChevronRight className="w-4 h-4" />
-                      </Button>
-                   </div>
-                </div>
-              </div>
+                {schemas.length === 0 && (
+                    <div className="text-center p-4 text-sm text-muted-foreground">
+                        {t('data.noTables')}
+                        <Button variant="link" className="mt-2 h-auto p-0" onClick={() => setActiveTab('settings')}>
+                           {t('data.go_config')}
+                        </Button>
+                    </div>
+                )}
             </div>
-            
-            {/* Edit/Create Modal */}
-            <Dialog open={isEditModalOpen} onOpenChange={setIsEditModalOpen}>
-               <DialogContent>
-                  <DialogHeader>
-                     <DialogTitle>{isCreating ? t('data.create') : t('data.edit')}</DialogTitle>
-                     <DialogDescription>
-                        {isCreating ? t('data.create_desc') : t('data.edit_desc')}
-                     </DialogDescription>
-                  </DialogHeader>
-                  <form id="data-edit-form" onSubmit={handleSaveEdit} className="space-y-4 py-2">
-                     {activeSchema.fields.map(field => (
-                        <div key={field.id} className="space-y-2">
-                           <Label>
-                              {field.label}
-                              {field.required && <span className="text-red-500 ml-1">*</span>}
-                           </Label>
-                           
-                           {field.type === 'select' ? (
-                              <Combobox 
-                                 options={field.options?.map(o => ({ value: o.value, label: o.label, color: o.color })) || []}
-                                 value={formData[field.name] || ''}
-                                 onChange={val => setFormData({...formData, [field.name]: val})}
-                                 className={cn(formErrors[field.name] && "border-red-500 focus-visible:ring-red-500")}
-                              />
-                           ) : field.type === 'boolean' ? (
-                              <div className="flex items-center space-x-2">
-                                <Switch 
-                                  checked={formData[field.name] === 'true' || formData[field.name] === true}
-                                  onCheckedChange={(checked) => setFormData({...formData, [field.name]: checked})}
-                                />
-                                <Label className="font-normal text-sm text-muted-foreground">
-                                  {(formData[field.name] === 'true' || formData[field.name] === true) ? (field.booleanLabels?.true || 'Yes') : (field.booleanLabels?.false || 'No')}
-                                </Label>
-                              </div>
-                           ) : field.type === 'date' ? (
-                              <DatePicker
-                                 value={formData[field.name] ? new Date(formData[field.name]) : undefined}
-                                 onChange={(date) => setFormData({...formData, [field.name]: date ? date.toISOString().split('T')[0] : ''})}
-                                 className={cn(formErrors[field.name] && "border-red-500")}
-                              />
-                           ) : (
-                              <Input 
-                                 type={field.type === 'number' ? 'number' : 'text'}
-                                 required={field.required}
-                                 value={formData[field.name] || ''}
-                                 onChange={e => setFormData({...formData, [field.name]: e.target.value})}
-                                 className={cn(formErrors[field.name] && "border-red-500 focus-visible:ring-red-500")}
-                              />
-                           )}
-                           {formErrors[field.name] && <p className="text-[10px] text-red-500 font-medium">{formErrors[field.name]}</p>}
+        </div>
+
+        {/* MAIN CONTENT */}
+        <div className="flex-1 flex flex-col overflow-hidden bg-slate-50 dark:bg-slate-900/50">
+            {activeSchema ? (
+                <>
+                    {/* Toolbar */}
+                    <div className="h-16 border-b bg-background flex items-center justify-between px-6 shrink-0 gap-4">
+                        <div className="flex flex-col">
+                             <h1 className="text-lg font-semibold flex items-center gap-2">
+                                 {activeSchema.name}
+                                 <span className="text-xs font-normal text-muted-foreground bg-muted px-2 py-0.5 rounded-full">
+                                    {processedRecords.length} {t('data.records')}
+                                 </span>
+                             </h1>
+                             <p className="text-xs text-muted-foreground truncate max-w-[300px]">{activeSchema.description}</p>
                         </div>
-                     ))}
-                  </form>
-                  <DialogFooter>
-                     <Button variant="outline" onClick={() => setIsEditModalOpen(false)}>{t('common.cancel')}</Button>
-                     <Button type="submit" form="data-edit-form">{isCreating ? t('common.add') : t('data.save')}</Button>
-                  </DialogFooter>
-               </DialogContent>
-            </Dialog>
 
-            {/* Delete Confirmation Dialog */}
-            <Dialog open={!!deleteConfirmId} onOpenChange={(open) => !open && setDeleteConfirmId(null)}>
-               <DialogContent className="max-w-sm">
-                  <DialogHeader>
-                    <DialogTitle className="flex items-center gap-2 text-destructive">
-                       <AlertTriangle className="w-5 h-5" /> {t('data.delete_title')}
-                    </DialogTitle>
-                    <DialogDescription>
-                       {t('data.delete_desc')}
-                    </DialogDescription>
-                  </DialogHeader>
-                  <DialogFooter>
-                     <Button variant="outline" onClick={() => setDeleteConfirmId(null)}>{t('common.cancel')}</Button>
-                     <Button variant="destructive" onClick={confirmDelete}>{t('map.confirm_delete')}</Button>
-                  </DialogFooter>
-               </DialogContent>
-            </Dialog>
+                        <div className="flex items-center gap-2">
+                            {/* Toggle Column Filters */}
+                            <Button 
+                                variant={showFilters ? 'secondary' : 'outline'} 
+                                size="sm" 
+                                onClick={() => setShowFilters(!showFilters)}
+                                className={cn(showFilters && "bg-blue-50 text-blue-600 border-blue-200")}
+                            >
+                                <Filter className="w-4 h-4 mr-2" />
+                                {t('data.filters')}
+                            </Button>
 
-          </>
-        ) : (
-          <div className="flex-1 flex items-center justify-center text-muted-foreground">
-            {t('data.select')}
-          </div>
-        )}
-      </div>
+                            {/* Global Search */}
+                            <div className="relative w-64">
+                                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                                <Input 
+                                    placeholder={t('data.search')}
+                                    value={localSearch}
+                                    onChange={e => { setLocalSearch(e.target.value); setCurrentPage(1); }}
+                                    className="pl-9 h-9"
+                                />
+                            </div>
+
+                            {/* Add Button */}
+                            {canEdit && (
+                                <Button onClick={handleCreateClick} size="sm" className="ml-2">
+                                    <Plus className="w-4 h-4 mr-2" /> {t('common.add')}
+                                </Button>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Table View */}
+                    <div className="flex-1 overflow-auto p-6 flex flex-col">
+                        <div className="bg-background rounded-md border shadow-sm overflow-hidden flex-1">
+                            <Table>
+                                <TableHeader className="bg-muted/30">
+                                    <TableRow>
+                                        <TableHead className="w-[60px] text-center">#</TableHead>
+                                        {activeSchema.fields.map(f => (
+                                            <TableHead key={f.id} className="min-w-[150px]">
+                                                <button 
+                                                    className={cn(
+                                                        "flex items-center gap-1 font-semibold text-xs uppercase tracking-wider hover:text-primary transition-colors",
+                                                        sortConfig?.key === f.name ? "text-primary" : "text-muted-foreground"
+                                                    )}
+                                                    onClick={() => f.sortable !== false && handleSort(f.name)}
+                                                >
+                                                    {f.label}
+                                                    {sortConfig?.key === f.name ? (
+                                                        sortConfig.direction === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                                                    ) : (
+                                                        f.sortable !== false && <ArrowUpDown className="w-3 h-3 opacity-30" />
+                                                    )}
+                                                </button>
+                                            </TableHead>
+                                        ))}
+                                        <TableHead className="w-[100px] text-right">Actions</TableHead>
+                                    </TableRow>
+                                    
+                                    {/* Column Filters Row */}
+                                    {showFilters && (
+                                        <TableRow className="bg-blue-50/50 hover:bg-blue-50/50">
+                                            <TableHead></TableHead>
+                                            {activeSchema.fields.map(f => (
+                                                <TableHead key={f.id} className="py-2">
+                                                    {f.filterable !== false && (
+                                                        <div className="relative">
+                                                            <Input 
+                                                                className="h-7 text-xs pr-6" 
+                                                                placeholder={`Filter ${f.label}...`}
+                                                                value={columnFilters[f.name] || ''}
+                                                                onChange={e => {
+                                                                    setColumnFilters(prev => ({ ...prev, [f.name]: e.target.value }));
+                                                                    setCurrentPage(1);
+                                                                }}
+                                                            />
+                                                            {columnFilters[f.name] && (
+                                                                <button 
+                                                                    className="absolute right-1 top-1.5 text-muted-foreground hover:text-destructive"
+                                                                    onClick={() => setColumnFilters(prev => ({ ...prev, [f.name]: '' }))}
+                                                                >
+                                                                    <X className="w-3 h-3" />
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                </TableHead>
+                                            ))}
+                                            <TableHead></TableHead>
+                                        </TableRow>
+                                    )}
+                                </TableHeader>
+                                <TableBody>
+                                    {currentRecords.map((record, idx) => (
+                                        <TableRow key={record.id} className="group hover:bg-muted/30">
+                                            <TableCell className="text-center text-xs text-muted-foreground bg-muted/5 font-mono">
+                                                {(currentPage - 1) * itemsPerPage + idx + 1}
+                                            </TableCell>
+                                            {activeSchema.fields.map(f => {
+                                                const val = record.data[f.name];
+                                                let display = val;
+                                                if (f.type === 'select') {
+                                                    const opt = f.options?.find(o => o.value === val);
+                                                    if (opt?.color) {
+                                                        display = (
+                                                            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium border bg-white" style={{borderColor: opt.color + '40'}}>
+                                                                <span className="w-1.5 h-1.5 rounded-full" style={{background: opt.color}} />
+                                                                {val}
+                                                            </span>
+                                                        );
+                                                    }
+                                                } else if (f.type === 'boolean') {
+                                                    display = val ? (
+                                                        <span className="text-green-600 bg-green-50 px-2 py-0.5 rounded text-xs font-medium border border-green-100">{f.booleanLabels?.true || 'Yes'}</span>
+                                                    ) : (
+                                                        <span className="text-slate-500 bg-slate-100 px-2 py-0.5 rounded text-xs font-medium border border-slate-200">{f.booleanLabels?.false || 'No'}</span>
+                                                    );
+                                                }
+                                                return (
+                                                    <TableCell key={f.id} className="py-3 text-sm max-w-[200px] truncate" title={String(val)}>
+                                                        {display}
+                                                    </TableCell>
+                                                );
+                                            })}
+                                            <TableCell className="text-right py-2">
+                                                <div className="flex justify-end gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+                                                    {record.geometry && (
+                                                        <Button variant="ghost" size="icon" className="h-7 w-7 text-blue-600 hover:text-blue-700 hover:bg-blue-50" onClick={() => locateOnMap(record)} title="Locate on Map">
+                                                            <MapPin className="w-3.5 h-3.5" />
+                                                        </Button>
+                                                    )}
+                                                    {canEdit && (
+                                                        <>
+                                                            <Button variant="ghost" size="icon" className="h-7 w-7 text-slate-600 hover:text-slate-900" onClick={() => handleEditClick(record)} title="Edit">
+                                                                <Edit className="w-3.5 h-3.5" />
+                                                            </Button>
+                                                            <Button variant="ghost" size="icon" className="h-7 w-7 text-red-400 hover:text-red-600 hover:bg-red-50" onClick={() => handleDeleteClick(record.id)} title="Delete">
+                                                                <Trash2 className="w-3.5 h-3.5" />
+                                                            </Button>
+                                                        </>
+                                                    )}
+                                                </div>
+                                            </TableCell>
+                                        </TableRow>
+                                    ))}
+                                    {currentRecords.length === 0 && (
+                                        <TableRow>
+                                            <TableCell colSpan={activeSchema.fields.length + 2} className="h-48 text-center">
+                                                <div className="flex flex-col items-center justify-center text-muted-foreground gap-2">
+                                                    <SlidersHorizontal className="w-8 h-8 opacity-20" />
+                                                    <p>{t('data.noRecords')}</p>
+                                                    {(localSearch || Object.keys(columnFilters).some(k => columnFilters[k])) && (
+                                                        <Button variant="link" size="sm" onClick={() => { setLocalSearch(''); setColumnFilters({}); }}>Clear Filters</Button>
+                                                    )}
+                                                </div>
+                                            </TableCell>
+                                        </TableRow>
+                                    )}
+                                </TableBody>
+                            </Table>
+                        </div>
+
+                        {/* Pagination */}
+                        <div className="mt-4 flex items-center justify-between border-t pt-4">
+                            <div className="flex items-center gap-4">
+                                <div className="text-xs text-muted-foreground">
+                                    {t('data.showing')} {(currentPage - 1) * itemsPerPage + 1} {t('data.to')} {Math.min(currentPage * itemsPerPage, processedRecords.length)} {t('data.of')} {processedRecords.length}
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <span className="text-xs text-muted-foreground">Rows per page</span>
+                                    <Select 
+                                        className="h-8 w-[70px] text-xs" 
+                                        value={String(itemsPerPage)} 
+                                        onChange={(e) => { setItemsPerPage(Number(e.target.value)); setCurrentPage(1); }}
+                                    >
+                                        <option value="10">10</option>
+                                        <option value="15">15</option>
+                                        <option value="25">25</option>
+                                        <option value="50">50</option>
+                                        <option value="100">100</option>
+                                    </Select>
+                                </div>
+                            </div>
+                            
+                            {totalPages > 1 && (
+                                <div className="flex gap-2 items-center">
+                                    <Button variant="outline" size="sm" onClick={() => setCurrentPage(1)} disabled={currentPage === 1} className="h-8 w-8 p-0" title="First Page">
+                                        <ChevronsLeft className="w-4 h-4" />
+                                    </Button>
+                                    <Button variant="outline" size="sm" onClick={() => setCurrentPage(p => Math.max(1, p-1))} disabled={currentPage === 1} className="h-8 w-8 p-0" title="Previous Page">
+                                        <ChevronLeft className="w-4 h-4" />
+                                    </Button>
+                                    
+                                    <div className="flex items-center gap-1 mx-2">
+                                        {renderPaginationNumbers()}
+                                    </div>
+
+                                    <Button variant="outline" size="sm" onClick={() => setCurrentPage(p => Math.min(totalPages, p+1))} disabled={currentPage === totalPages} className="h-8 w-8 p-0" title="Next Page">
+                                        <ChevronRight className="w-4 h-4" />
+                                    </Button>
+                                    <Button variant="outline" size="sm" onClick={() => setCurrentPage(totalPages)} disabled={currentPage === totalPages} className="h-8 w-8 p-0" title="Last Page">
+                                        <ChevronsRight className="w-4 h-4" />
+                                    </Button>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </>
+            ) : (
+                <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-8">
+                    <Database className="w-16 h-16 opacity-10 mb-4" />
+                    <p className="text-lg font-medium">{t('data.select')}</p>
+                </div>
+            )}
+        </div>
+
+        {/* Edit/Create Modal */}
+        <Dialog open={isEditModalOpen} onOpenChange={(open) => !open && attemptCloseModal()}>
+          <DialogContent className="sm:max-w-[500px]">
+             <DialogHeader>
+                <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-full flex items-center justify-center bg-primary/10 text-primary">
+                        {isCreating ? <Plus className="w-4 h-4" /> : <Edit className="w-4 h-4" />}
+                    </div>
+                    <div>
+                        <DialogTitle>{isCreating ? t('data.create') : t('data.edit')}</DialogTitle>
+                        <DialogDescription>
+                        {isCreating ? t('data.create_desc') : t('data.edit_desc')}
+                        </DialogDescription>
+                    </div>
+                </div>
+             </DialogHeader>
+             {activeSchema && (
+                 <form id="data-edit-form" onSubmit={handleSaveEdit} className="space-y-4 py-2 max-h-[60vh] overflow-y-auto px-1">
+                    {activeSchema.fields.map(field => (
+                    <div key={field.id} className="space-y-2">
+                        <Label>
+                            {field.label}
+                            {field.required && <span className="text-red-500 ml-1">*</span>}
+                        </Label>
+                        
+                        {field.type === 'select' ? (
+                            <Combobox 
+                                options={field.options?.map(o => ({ value: o.value, label: o.label, color: o.color })) || []}
+                                value={formData[field.name] || ''}
+                                onChange={val => handleFormDataChange(field.name, val)}
+                                className={cn(formErrors[field.name] && "border-red-500 focus-visible:ring-red-500")}
+                            />
+                        ) : field.type === 'boolean' ? (
+                            <div className="flex items-center space-x-2 border p-3 rounded-md bg-muted/20">
+                            <Switch 
+                                checked={formData[field.name] === 'true' || formData[field.name] === true}
+                                onCheckedChange={(checked) => handleFormDataChange(field.name, checked)}
+                            />
+                            <Label className="font-normal text-sm cursor-pointer" onClick={() => handleFormDataChange(field.name, !formData[field.name])}>
+                                {(formData[field.name] === 'true' || formData[field.name] === true) ? (field.booleanLabels?.true || 'Yes') : (field.booleanLabels?.false || 'No')}
+                            </Label>
+                            </div>
+                        ) : field.type === 'date' ? (
+                            <DatePicker
+                                value={formData[field.name] ? new Date(formData[field.name]) : undefined}
+                                onChange={(date) => handleFormDataChange(field.name, date ? date.toISOString().split('T')[0] : '')}
+                                className={cn(formErrors[field.name] && "border-red-500")}
+                            />
+                        ) : field.type === 'datetime' ? (
+                            <Input
+                                type="datetime-local"
+                                required={field.required}
+                                value={formData[field.name] ? String(formData[field.name]).slice(0, 16) : ''}
+                                onChange={e => handleFormDataChange(field.name, e.target.value)}
+                                className={cn(formErrors[field.name] && "border-red-500 focus-visible:ring-red-500")}
+                            />
+                        ) : (
+                            <Input 
+                                type={field.type === 'number' ? 'number' : 'text'}
+                                required={field.required}
+                                value={formData[field.name] || ''}
+                                onChange={e => handleFormDataChange(field.name, e.target.value)}
+                                className={cn(formErrors[field.name] && "border-red-500 focus-visible:ring-red-500")}
+                            />
+                        )}
+                        {formErrors[field.name] && <p className="text-[10px] text-red-500 font-medium animate-in slide-in-from-top-1">{formErrors[field.name]}</p>}
+                    </div>
+                    ))}
+                 </form>
+             )}
+             <DialogFooter>
+                <Button variant="outline" onClick={attemptCloseModal}>{t('common.cancel')}</Button>
+                <Button type="submit" form="data-edit-form">{isCreating ? t('common.add') : t('data.save')}</Button>
+             </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+       {/* Unsaved Changes Dialog */}
+       <Dialog open={showUnsavedDialog} onOpenChange={setShowUnsavedDialog}>
+            <DialogContent>
+                <DialogHeader>
+                    <DialogTitle>{t('common.unsaved_changes')}</DialogTitle>
+                    <DialogDescription>{t('common.unsaved_desc')}</DialogDescription>
+                </DialogHeader>
+                <div className="py-2">
+                    <ul className="list-disc list-inside text-sm text-muted-foreground">
+                        {unsavedChanges.map(field => (
+                            <li key={field}>{field}</li>
+                        ))}
+                    </ul>
+                </div>
+                <DialogFooter>
+                    <Button variant="outline" onClick={forceCloseModal} className="text-destructive hover:text-destructive">{t('common.discard')}</Button>
+                    <Button onClick={() => setShowUnsavedDialog(false)}>{t('common.continue_editing')}</Button>
+                </DialogFooter>
+            </DialogContent>
+       </Dialog>
+
+       {/* Delete Confirmation */}
+       <Dialog open={!!deleteConfirmId} onOpenChange={(open) => !open && setDeleteConfirmId(null)}>
+          <DialogContent>
+              <DialogHeader>
+                  <DialogTitle>{t('data.delete_title')}</DialogTitle>
+                  <DialogDescription>{t('data.delete_desc')}</DialogDescription>
+              </DialogHeader>
+              <DialogFooter>
+                  <Button variant="outline" onClick={() => setDeleteConfirmId(null)}>{t('common.cancel')}</Button>
+                  <Button variant="destructive" onClick={confirmDelete}>{t('common.delete')}</Button>
+              </DialogFooter>
+          </DialogContent>
+       </Dialog>
     </div>
   );
 };
