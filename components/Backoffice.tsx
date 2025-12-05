@@ -1177,6 +1177,12 @@ export const Backoffice: React.FC = () => {
         });
     };
 
+    // Helper to force navigation change even if editor is open
+    const handleNavigation = (section: string) => {
+        setEditingSchema(null);
+        setActiveSection(section);
+    };
+
     const renderContent = () => {
         if (editingSchema) {
             return (
@@ -1305,45 +1311,45 @@ export const Backoffice: React.FC = () => {
                     <NavGroup title="System">
                         <NavItem 
                             id="general" label={t('cfg.general')} icon={Settings} 
-                            active={activeSection === 'general'} onClick={() => setActiveSection('general')} 
+                            active={activeSection === 'general'} onClick={() => handleNavigation('general')} 
                         />
                         <NavItem 
                             id="database" label="Database Admin" icon={Database} 
-                            active={activeSection === 'database'} onClick={() => setActiveSection('database')} 
+                            active={activeSection === 'database'} onClick={() => handleNavigation('database')} 
                         />
                         <NavItem 
                             id="logs" label="System Logs" icon={Activity} 
-                            active={activeSection === 'logs'} onClick={() => setActiveSection('logs')} 
+                            active={activeSection === 'logs'} onClick={() => handleNavigation('logs')} 
                         />
                     </NavGroup>
 
                     <NavGroup title="Modules">
                         <NavItem 
                             id="map_config" label="Map Configuration" icon={MapIcon} 
-                            active={activeSection === 'map_config'} onClick={() => setActiveSection('map_config')} 
+                            active={activeSection === 'map_config'} onClick={() => handleNavigation('map_config')} 
                         />
                         <NavItem 
                             id="schemas" label={t('cfg.tables')} icon={TableProperties} 
-                            active={activeSection === 'schemas'} onClick={() => setActiveSection('schemas')} 
+                            active={activeSection === 'schemas'} onClick={() => handleNavigation('schemas')} 
                         />
                         <NavItem 
                             id="dashboards" label={t('cfg.dash')} icon={LayoutDashboard} 
-                            active={activeSection === 'dashboards'} onClick={() => setActiveSection('dashboards')} 
+                            active={activeSection === 'dashboards'} onClick={() => handleNavigation('dashboards')} 
                         />
                         <NavItem 
                             id="calendars" label={t('cfg.cals')} icon={Calendar} 
-                            active={activeSection === 'calendars'} onClick={() => setActiveSection('calendars')} 
+                            active={activeSection === 'calendars'} onClick={() => handleNavigation('calendars')} 
                         />
                     </NavGroup>
 
                     <NavGroup title="Access & Tools">
                         <NavItem 
                             id="users" label={t('cfg.users')} icon={Users} 
-                            active={activeSection === 'users'} onClick={() => setActiveSection('users')} 
+                            active={activeSection === 'users'} onClick={() => handleNavigation('users')} 
                         />
                         <NavItem 
                             id="shortcuts" label={t('cfg.shortcuts')} icon={Zap} 
-                            active={activeSection === 'shortcuts'} onClick={() => setActiveSection('shortcuts')} 
+                            active={activeSection === 'shortcuts'} onClick={() => handleNavigation('shortcuts')} 
                         />
                     </NavGroup>
                 </div>
